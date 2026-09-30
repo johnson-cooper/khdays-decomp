@@ -1,0 +1,32 @@
+/* PS2: mechanically prepared copy of src/overlays/scenes/ov002_field/Ov002_UpdateRatePanel.c (ps2/tools/prep_sources.py). Do not edit. */
+extern int data_ov002_0207fa00;
+extern unsigned char data_0204c240;
+extern unsigned char data_0204c248[];
+
+extern unsigned long long Ov002_GetTimeoutTicks(void);
+extern int kh_rt_ll_udiv_w_32(unsigned long long value, unsigned int arg2, int arg3);
+extern int Ov002_GetRootField8bc8(void);
+extern void Ov002_StartHudTimer(int nKind, int nValue);
+
+/* Recompute the displayed rate for the active slot, or blank it when no slot
+ * is selected. Only runs while the enable bit is set. */
+void Ov002_UpdateRatePanel(void)
+{
+    int pPanel;
+
+    pPanel = *(int *)&data_ov002_0207fa00 + 0x8ba8;
+
+    if ((data_0204c240 & 4) == 0) {
+        return;
+    }
+
+    if (data_0204c248[4] == 0xff) {
+        *(int *)(pPanel + 0x1c) = -1;
+        return;
+    }
+
+    *(int *)(pPanel + 0x1c) = kh_rt_ll_udiv_w_32(Ov002_GetTimeoutTicks() << 6, 0x82ea, 0);
+    *(short *)(pPanel + 0x20) = data_0204c248[4];
+
+    Ov002_StartHudTimer(0, Ov002_GetRootField8bc8());
+}

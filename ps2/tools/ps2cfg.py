@@ -33,6 +33,7 @@ GAME_CFLAGS = [
     "-fwrapv",                    # ARM wraps signed overflow; keep that behaviour
     "-fno-builtin",               # the game has its own memcpy-likes with SDK names
     "-fsigned-char",              # the matching build uses mwcc -char signed
+    "-fcommon",                   # tentative definitions shared between files, as mwcc merges them
     "-w",
 ]
 GAME_INCLUDES = ["ps2/include", "include"]
@@ -67,7 +68,7 @@ def is_excluded(relpath):
     relpath = relpath.replace("\\", "/")
     for pat in excluded_patterns():
         if pat.endswith("/"):
-            if relpath.startswith(pat):
+            if relpath.startswith(pat) or ("/" + pat) in relpath:
                 return True
         elif relpath == pat or os.path.basename(relpath) == pat:
             return True

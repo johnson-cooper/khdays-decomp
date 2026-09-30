@@ -1,0 +1,34 @@
+# Source roots compiled into the PS2 game ELF (one archive per directory, chunked).
+#
+# Game code: everything (minus ps2/config/exclude.txt).
+src/engine
+src/overlays
+#
+# Decomp library C kept where it is portable.  PS2 implementations in ps2/src/nitro are linked
+# first and win for any symbol they define; library files that touch DS hardware addresses or
+# contain assembly are excluded automatically (list: build/ps2/lib_autoexcluded.txt) and are
+# replaced or stubbed.  asm_stubs/ directories are never compiled.
+libs/nns/fnd
+libs/nitro/nns
+libs/nns/g3d
+libs/nns/g2d
+libs/nns/gfd
+libs/nitro/fx
+libs/nitro/mtx
+libs/nitro/math
+libs/nitro/std
+libs/nitro/fs
+libs/nitro/mi
+libs/nitro/dgt
+libs/nitro/nitro
+libs/nitro/snd
+libs/nns/snd
+libs/msl/c
+libs/msl/runtime
+#
+# Single files from otherwise replaced modules (portable, reviewed)
+libs/nitro/os/calls/func_01ff8128.c
+libs/nitro/os/calls/func_01ff8138.c
+libs/nitro/os/calls/func_0202019c.c
+libs/nitro/gx/calls/GFXi_EnqueueCommand.c
+libs/nitro/gx/calls/GFXi_SaveStateTo.c

@@ -7,7 +7,7 @@
 /* Primitive coordinates are offset so that the drawing area sits in the middle of the GS's
  * 4096x4096 coordinate space. */
 #define KH_GS_OFS 2048
-#define KH_GS_FRAME_QWORDS (256 * 1024 / 16)   /* 256 KiB per frame packet, double-buffered */
+#define KH_GS_FRAME_QWORDS (1024 * 1024 / 16)  /* 1 MiB per frame packet (2D is one sprite per tile), double-buffered */
 
 #include <gs_gp.h>
 #ifndef GS_SET_XYZ
@@ -27,11 +27,22 @@
 #define KH_PK_XYZ2_LO(x, y)         ((uint64_t)((x) & 0xffff) | ((uint64_t)((y) & 0xffff) << 32))
 #define KH_PK_XYZ2_HI(z)            ((uint64_t)(uint32_t)(z))
 
+/* A GIF packet.  Normal mode: plain GIF data sent with one normal-mode DMA.  Chain mode
+ * (frame packets): the data is wrapped in DMA tags so that large payloads -- tile, palette and
+ * texture images -- are sent straight from where they live with REF tags, never copied. */
 typedef struct KhGsPacket {
     void    *base;   /* 64-byte aligned, cached */
     uint32_t cap;    /* qwords */
     uint32_t len;    /* qwords used */
+    int32_t  tag;    /* chain mode: qword index of the open CNT tag, -1 in normal mode */
 } KhGsPacket;
+
+void kh_gs_chain_begin(KhGsPacket *p);
+/* chain mode: send qwc qwords from data (16-byte aligned, in main RAM) at this point */
+void kh_gs_chain_ref(KhGsPacket *p, const void *data, uint32_t qwc);
+void kh_gs_chain_send(KhGsPacket *p);
+/* an IMAGE upload whose pixels are sent by reference (chain mode) */
+void kh_gs_upload_ref(KhGsPacket *p, const void *src, int bp, int bw, int psm, int x, int y, int w, int h);
 
 static inline void kh_gs_packet_q(KhGsPacket *p, uint64_t lo, uint64_t hi)
 {

@@ -13,3 +13,12 @@
 static uint32_t g_used;
 
 uint32_t kh_gs_texpool_used(void) { return g_used; }
+
+/* Texture / palette VRAM was reloaded by the game: cached GS copies of that range are stale. */
+static uint32_t g_tex_generation, g_pltt_generation;
+
+extern void kh_tex3d_invalidate(void);
+extern uint32_t kh_tex3d_used(void);
+
+void kh_gfx_tex_dirty(uint32_t ofs, uint32_t size) { (void)ofs; (void)size; g_tex_generation++; kh_tex3d_invalidate(); }
+void kh_gfx_pltt_dirty(uint32_t ofs, uint32_t size) { (void)ofs; (void)size; g_pltt_generation++; kh_tex3d_invalidate(); }

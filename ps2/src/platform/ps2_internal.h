@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 void ps2_log_open_file(void);
+void ps2_crash_install(void);
 
 /* IOP bring-up (ps2_iop.c) */
 void ps2_iop_reset_and_load_base(void);

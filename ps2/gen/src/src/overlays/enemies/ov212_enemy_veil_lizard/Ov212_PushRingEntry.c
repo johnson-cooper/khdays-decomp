@@ -1,0 +1,42 @@
+/* PS2: mechanically prepared copy of src/overlays/enemies/ov212_enemy_veil_lizard/Ov212_PushRingEntry.c (ps2/tools/prep_sources.py). Do not edit. */
+/* Ov212_PushRingEntry -- push one entry into the ring buffer at ctx[0]+0x90 and advance the write
+ * index with a wrap.
+ *
+ * One of a 3-member shape family; the twins live in ov266/ov267 and are byte-identical modulo
+ * relocs (matched here, fanned out with dedupprop).
+ *
+ * Entries are 0x38 bytes. The slot gets a fixed 0x1000 / 0x800 header, the caller's quaternion at
+ * +8 and the caller's vector at +0x2c. The index at ctx[1] then advances modulo the capacity at
+ * ctx[0]+0x8c -- a plain ring buffer.
+ *
+ * ★ The wrap is why this looked wrong at first: the ROM does `bl kh_rt_s32_divmod` and then
+ * `str r1, [r4, #4]`, storing a register the call should have clobbered. kh_rt_s32_divmod is the
+ * divide helper and returns BOTH results -- quotient in r0, remainder in r1 -- so it must be
+ * declared `long long` and the remainder taken as the HIGH word. `(int)(q >> 32)` is the modulo;
+ * `(int)q` would be the quotient. (The tree already had this: see Ov003_DrawNumber.) */
+
+#include "nitro/fx_types.h"
+
+typedef struct {
+    int x;
+    int y;
+    int z;
+    int w;
+} Quaternion;
+
+extern long long kh_rt_s32_divmod(int num, int den);
+
+void Ov212_PushRingEntry(int *ctx, const VecFx32 *v, const Quaternion *q) {
+    int i;
+    int base;
+    int slot;
+
+    i = ctx[1];
+    base = *(int *)(ctx[0] + 0x90);
+    slot = base + i * 0x38;
+    *(int *)(base + i * 0x38) = 0x1000;
+    *(int *)(slot + 4) = 0x800;
+    *(VecFx32 *)(slot + 0x2c) = *v;
+    *(Quaternion *)(slot + 8) = *q;
+    ctx[1] = (int)(kh_rt_s32_divmod(ctx[1] + 1, *(int *)(ctx[0] + 0x8c)) >> 32);
+}

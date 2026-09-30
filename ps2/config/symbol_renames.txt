@@ -1,0 +1,3 @@
+# Decomp global names that collide with PS2SDK / newlib symbols, renamed in every decomp source
+# by prep_sources.py (R12).  <decomp name> <PS2 build name>
+CreateThread     NNSi_SndStrmCreateThread     # NitroSystem sound streaming thread helper vs EE kernel CreateThread

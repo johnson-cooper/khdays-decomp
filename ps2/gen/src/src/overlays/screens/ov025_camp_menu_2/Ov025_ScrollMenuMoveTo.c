@@ -1,0 +1,220 @@
+/* PS2: mechanically prepared copy of src/overlays/screens/ov025_camp_menu_2/Ov025_ScrollMenuMoveTo.c (ps2/tools/prep_sources.py). Do not edit. */
+/* Ov025_ScrollMenuMoveTo -- Ov008_ScrollMenuMoveTo: move the scrolling menu
+ * to row nRow (wrapped over the entry count of the list at +0x1cc) and
+ * redraw it; returns 1 when the list has more than one entry.  The scroll
+ * top is the scroll (+0x3c) / 16, reset to 0 with the target (+0x40) for
+ * short lists (up to 8 entries) that had scrolled; then the window is
+ * clamped: past the end (8 or more entries, top + 7 beyond the count) the
+ * top becomes count - 8 with the cursor offset (row - top) rows; a row
+ * beyond top + 7 sets the target to (row - 7) rows with the cursor on row
+ * 7; a row at or above the top makes it the target with the cursor at 0;
+ * otherwise the target stays and the cursor sits (row - top) rows less the
+ * scroll remainder.  Widgets 0x29 / 0x51 are placed at their bases (+0x20c
+ * / +0x214) plus the cursor offset, the list window drawn (0206c690) and
+ * the gauge knob laid out at (0x80 - +0x4c) * (target % 16 + top * 16) /
+ * (16 * (visible - 8)); with more than 8 visible rows widgets 3 / 4 show
+ * while the knob is above 0 / below the range, else both hide.  When bDraw
+ * is set the row's entry text is pushed (0206eb64) by kind (+0x8): 0 =
+ * record 0x15 of the id (or record 0x13 of its +0x34), 1 / 5 = record 0x13
+ * of the id, 2 = variable text id, 3 = text id - 0x3b, 4 = texts 0x84 /
+ * 0x83 for ids 0xff / 0xfe else the record of db 0206b6e4; the surface
+ * (+0x64) is queued.  The row is stored (+0x50).  Codegen: the entry count
+ * is the first zero (shared with the {0, 0} initialisers); the row
+ * parameter is reused for the wrapped row; the top and the widget context
+ * live in a block (top declared first) so they colour after the cursor
+ * entry; the arrow flags are if/else assignments held across the lookup;
+ * the kind-0 text is a ternary on the two record fields (one shared load);
+ * the division helper is called explicitly (remainder from the high word).
+ */
+
+#include "nitro/types.h"
+#include "game/engine.h"
+
+#define ROW_HEIGHT     16
+#define WINDOW_ROWS    8
+#define GAUGE_RANGE    0x80
+#define WIDGET_CURSOR_A 0x29
+#define WIDGET_CURSOR_B 0x51
+#define WIDGET_ARROW_UP 3
+#define WIDGET_ARROW_DOWN 4
+#define DB_MESSAGE_15  0x15
+#define DB_MESSAGE_13  0x13
+#define DB_SLOT        0xe
+
+typedef struct UiLayoutPos {
+    int nX;
+    int nY;
+} UiLayoutPos;
+
+typedef struct Ov008ListNode {
+    int nId;                  /* 0x00 */
+    u8  pad_04[4];
+    int nKind;                /* 0x08 */
+} Ov008ListNode;
+
+/* header shared by the 0x15 and 0x13 message records */
+typedef struct Ov008TextRecord {
+    u8  pad_00[0x10];
+    u32 nText;                /* 0x10: entry text */
+    u8  pad_14[0x20];
+    u32 nLinkedId;            /* 0x34: linked record 0x13 id (0x15 records) */
+} Ov008TextRecord;
+
+typedef struct Ov008ScrollMenu {
+    u8  pad_000[0x3c];
+    int nScrollPos;           /* 0x03c: current scroll, row * 16 */
+    int nScrollTarget;        /* 0x040: target scroll, row * 16 */
+    u8  pad_044[8];
+    int nGaugeScale;          /* 0x04c */
+    int nSelectedRow;         /* 0x050 */
+    u8  pad_054[4];
+    u8  textRecords[0xc];     /* 0x058: variable text records */
+    u8  objSurface[0x1cc - 0x64]; /* 0x064 */
+    u8  list[0xc];            /* 0x1cc */
+    u8  pad_1d8[0x20c - 0x1d8];
+    UiLayoutPos cursorBaseA;  /* 0x20c: base of widget 0x29 */
+    UiLayoutPos cursorBaseB;  /* 0x214: base of widget 0x51 */
+} Ov008ScrollMenu;
+
+extern int   Ov025_GetBlock4a80(void);                                  /* Ov008_GetCtxBlock4a80 */
+extern long long kh_rt_s32_divmod(int nNum, int nDen);                      /* _s32_div_f: quotient, remainder in the high word */
+extern void *NNS_FndGetNextListObject(void *pList, void *pObject);
+extern void *Ov025_FindEntryById(int nCtx, int nId);                     /* FindEntryById */
+extern void  Ov025_Widget_SetPoint(int nCtx, void *pEntry, UiLayoutPos *pPos); /* set the base position */
+extern void  Ov025_ReleaseTwoSlotsEx(int nCtx, void *pEntry, UiLayoutPos *pPos); /* Ov008_SetEntryPos */
+extern int   Ov025_DrawListWindow(Ov008ScrollMenu *pMenu, int nTop, int bFinal, int nArg); /* Ov008_DrawListWindow */
+extern void  Ov025_LayoutScrollGauge(Ov008ScrollMenu *pMenu, int nPos);      /* Ov008_LayoutScrollGauge */
+extern void  Ov025_SetEntrySlotsVisible(int nCtx, void *pEntry, int bVisible);  /* SetEntrySlotsVisible */
+extern Ov008ListNode *NNS_FndGetNthListObject(void *pList, int nIndex);          /* List_GetNthObject */
+extern int   Ov025_DrawPageBElement(int nMode, int nA, u32 nText);          /* cursor mode / text request */
+extern void *Ov025_GetVarRecordByIndex(void *pRecords, int nIndex);            /* GetVarRecordByIndex */
+extern u16   Ov025_GetMenuMsgDbId(void);                                  /* text db of the page */
+extern int   EnqueueObjGfxCommand(void *pSurface);                              /* EnqueueObjGfxCommand */
+
+int Ov025_ScrollMenuMoveTo(Ov008ScrollMenu *pMenu, int nRow, int bDraw, int nArg)
+{
+    UiLayoutPos offset = {0, 0};
+    UiLayoutPos pos = {0, 0};
+    Ov008TextRecord *pRecA;
+    Ov008TextRecord *pRecB;
+    Ov008TextRecord *pRecC;
+    int nCount;
+    void *pEntry;
+    void *pNode;
+    int nVisible;
+    int nRange;
+    int nKnob;
+    Ov008ListNode *pItem;
+    int nId;
+    int bUp;
+    int bDown;
+
+    nCount = 0;
+    pRecA = 0;
+    pRecB = 0;
+    pRecC = 0;
+    {
+        int nTop;
+        int nCtx;
+
+        nCtx = Ov025_GetBlock4a80();
+        for (pNode = NNS_FndGetNextListObject(pMenu->list, 0); pNode != 0; pNode = NNS_FndGetNextListObject(pMenu->list, pNode)) {
+            nCount++;
+        }
+        nRow = (int)(kh_rt_s32_divmod(nRow + nCount, nCount) >> 32);
+        nTop = pMenu->nScrollPos / ROW_HEIGHT;
+        if (nCount <= WINDOW_ROWS && pMenu->nScrollPos > 0) {
+            nTop = 0;
+            pMenu->nScrollTarget = 0;
+        }
+        if (nCount >= WINDOW_ROWS && nTop + 7 >= nCount) {
+            nTop = nCount - WINDOW_ROWS;
+            pMenu->nScrollTarget = nTop * ROW_HEIGHT;
+            offset.nY = (nRow - nTop) << 16;
+        } else if (nRow > nTop + 7) {
+            pMenu->nScrollTarget = (nRow - 7) * ROW_HEIGHT;
+            offset.nY = 7 << 16;
+            nTop = pMenu->nScrollTarget / ROW_HEIGHT;
+        } else if (nRow <= nTop) {
+            pMenu->nScrollTarget = nRow * ROW_HEIGHT;
+            offset.nY = 0;
+            nTop = pMenu->nScrollTarget / ROW_HEIGHT;
+        } else {
+            offset.nY = ((nRow - nTop) * ROW_HEIGHT - pMenu->nScrollPos % ROW_HEIGHT) << 12;
+        }
+        pEntry = Ov025_FindEntryById(nCtx, WIDGET_CURSOR_A);
+        pos.nX = pMenu->cursorBaseA.nX + offset.nX;
+        pos.nY = pMenu->cursorBaseA.nY + offset.nY;
+        Ov025_Widget_SetPoint(nCtx, pEntry, &pos);
+        Ov025_ReleaseTwoSlotsEx(nCtx, pEntry, &pos);
+        pEntry = Ov025_FindEntryById(nCtx, WIDGET_CURSOR_B);
+        pos.nX = pMenu->cursorBaseB.nX + offset.nX;
+        pos.nY = pMenu->cursorBaseB.nY + offset.nY;
+        Ov025_Widget_SetPoint(nCtx, pEntry, &pos);
+        Ov025_ReleaseTwoSlotsEx(nCtx, pEntry, &pos);
+        nVisible = Ov025_DrawListWindow(pMenu, nTop, 1, nArg);
+        nRange = GAUGE_RANGE - pMenu->nGaugeScale;
+        nKnob = (int)kh_rt_s32_divmod(nRange * (pMenu->nScrollTarget % ROW_HEIGHT + nTop * ROW_HEIGHT), (nVisible - WINDOW_ROWS) * ROW_HEIGHT);
+        Ov025_LayoutScrollGauge(pMenu, nKnob);
+        if (nVisible > WINDOW_ROWS) {
+            if (nKnob > 0) {
+                bUp = 1;
+            } else {
+                bUp = 0;
+            }
+            Ov025_SetEntrySlotsVisible(nCtx, Ov025_FindEntryById(nCtx, WIDGET_ARROW_UP), bUp);
+            if (nKnob < nRange) {
+                bDown = 1;
+            } else {
+                bDown = 0;
+            }
+            Ov025_SetEntrySlotsVisible(nCtx, Ov025_FindEntryById(nCtx, WIDGET_ARROW_DOWN), bDown);
+        } else {
+            Ov025_SetEntrySlotsVisible(nCtx, Ov025_FindEntryById(nCtx, WIDGET_ARROW_UP), 0);
+            Ov025_SetEntrySlotsVisible(nCtx, Ov025_FindEntryById(nCtx, WIDGET_ARROW_DOWN), 0);
+        }
+    }
+    if (bDraw != 0) {
+        pItem = NNS_FndGetNthListObject(pMenu->list, (u16)nRow);
+        switch (pItem->nKind) {
+        case 1:
+        case 5:
+            MsgDb_FetchRecord(&pRecB, DB_MESSAGE_13, pItem->nId, DB_SLOT);
+            Ov025_DrawPageBElement(0, 0, pRecB->nText);
+            DispatchByNodeKind(&pRecB);
+            break;
+        case 0:
+            MsgDb_FetchRecord(&pRecA, DB_MESSAGE_15, pItem->nId, DB_SLOT);
+            if (pRecA->nLinkedId != 0) {
+                MsgDb_FetchRecord(&pRecB, DB_MESSAGE_13, pRecA->nLinkedId, DB_SLOT);
+            }
+            Ov025_DrawPageBElement(0, 0, pRecB != 0 ? pRecB->nText : pRecA->nText);
+            if (pRecB != 0) {
+                DispatchByNodeKind(&pRecB);
+            }
+            DispatchByNodeKind(&pRecA);
+            break;
+        case 4:
+            nId = pItem->nId;
+            if (nId == 0xff) {
+                Ov025_DrawPageBElement(0, 0, (u32)Ov025_GetVarRecordByIndex(pMenu->textRecords, 0x84));
+            } else if (nId == 0xfe) {
+                Ov025_DrawPageBElement(0, 0, (u32)Ov025_GetVarRecordByIndex(pMenu->textRecords, 0x83));
+            } else {
+                MsgDb_FetchRecord(&pRecC, Ov025_GetMenuMsgDbId(), nId, DB_SLOT);
+                Ov025_DrawPageBElement(0, 0, pRecC->nText);
+                DispatchByNodeKind(&pRecC);
+            }
+            break;
+        case 3:
+            Ov025_DrawPageBElement(0, 0, (u32)Ov025_GetVarRecordByIndex(pMenu->textRecords, pItem->nId - 0x3b));
+            break;
+        case 2:
+            Ov025_DrawPageBElement(0, 0, (u32)Ov025_GetVarRecordByIndex(pMenu->textRecords, pItem->nId));
+            break;
+        }
+        EnqueueObjGfxCommand(pMenu->objSurface);
+    }
+    pMenu->nSelectedRow = nRow;
+    return nCount > 1;
+}

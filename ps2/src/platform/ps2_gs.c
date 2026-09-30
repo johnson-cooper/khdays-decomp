@@ -36,6 +36,7 @@ extern const unsigned char msx[];  /* 8x8 font from the SDK's libdebug */
 static int g_w = 640, g_h = 224;
 static int g_fbp[2], g_zbp, g_draw;
 static int g_fontbp, g_fontclut;
+static int g_flip_pending;
 static uint32_t g_vram_top;         /* first byte above fixed allocations */
 static KhGsPacket g_frame_pkt[2];
 
@@ -48,6 +49,65 @@ void kh_gs_packet_init(KhGsPacket *p, uint32_t qwords)
         kh_panic("GS packet buffer (%u KiB) allocation failed", qwords * 16 / 1024);
     p->cap = qwords;
     p->len = 0;
+    p->tag = -1;
+}
+
+/* ---- chain mode ---- */
+#define DMATAG(qwc, id, addr) ((uint64_t)((qwc) & 0xffff) | ((uint64_t)(id) << 28) | ((uint64_t)(uint32_t)(addr) << 32))
+enum { TAG_REFE = 0, TAG_CNT = 1, TAG_REF = 3, TAG_END = 7 };
+
+void kh_gs_chain_begin(KhGsPacket *p)
+{
+    p->len = 0;
+    p->tag = 0;
+    kh_gs_packet_q(p, 0, 0);          /* CNT tag, filled in when closed */
+}
+
+static void close_tag(KhGsPacket *p, int id)
+{
+    uint64_t *t = (uint64_t *)p->base + p->tag * 2;
+    t[0] = DMATAG(p->len - p->tag - 1, id, 0);
+    t[1] = 0;
+}
+
+void kh_gs_chain_ref(KhGsPacket *p, const void *data, uint32_t qwc)
+{
+    if (p->tag < 0)
+        kh_panic("kh_gs_chain_ref on a normal-mode packet");
+    close_tag(p, TAG_CNT);
+    while (qwc) {
+        uint32_t n = qwc > 0xffff ? 0xffff : qwc;
+        kh_gs_packet_q(p, DMATAG(n, TAG_REF, (uintptr_t)data), 0);
+        data = (const uint8_t *)data + n * 16;
+        qwc -= n;
+    }
+    p->tag = (int32_t)p->len;
+    kh_gs_packet_q(p, 0, 0);
+}
+
+void kh_gs_chain_send(KhGsPacket *p)
+{
+    close_tag(p, TAG_END);
+    FlushCache(0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    dma_channel_send_chain(DMA_CHANNEL_GIF, p->base, (int)p->len, 0, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    p->len = 0;
+}
+
+void kh_gs_upload_ref(KhGsPacket *p, const void *src, int bp, int bw, int psm, int x, int y, int w, int h)
+{
+    int bpp = (psm == GS_PSM_8) ? 8 : (psm == GS_PSM_4) ? 4 : (psm == GS_PSM_16 || psm == GS_PSM_16S) ? 16 : 32;
+    uint32_t qw = ((uint32_t)w * (uint32_t)h * (uint32_t)bpp / 8u + 15) / 16;
+
+    kh_gs_packet_ad_begin(p, 4);
+    kh_gs_packet_q(p, GS_SET_BITBLTBUF(0, 0, 0, bp, bw, psm), GS_REG_BITBLTBUF);
+    kh_gs_packet_q(p, GS_SET_TRXPOS(0, 0, x, y, 0), GS_REG_TRXPOS);
+    kh_gs_packet_q(p, GS_SET_TRXREG(w, h), GS_REG_TRXREG);
+    kh_gs_packet_q(p, GS_SET_TRXDIR(0), GS_REG_TRXDIR);
+    kh_gs_packet_q(p, GIF_SET_TAG(qw, 1, 0, 0, GIF_FLG_IMAGE, 0), 0);
+    kh_gs_chain_ref(p, src, qw);
+    kh_prof_tex_upload(qw * 16);
 }
 
 void kh_gs_packet_send(KhGsPacket *p)
@@ -191,6 +251,9 @@ int kh_video_init(KhVideoMode mode)
 }
 
 int kh_video_width(void) { return g_w; }
+
+/* ZBUF_1 for the frame's Z buffer, with Z writes masked or not */
+uint64_t kh_gs_zbuf_value(int mask_writes) { return GS_SET_ZBUF(g_zbp / 2048, GS_PSMZ_24, mask_writes ? 1 : 0); }
 int kh_video_height(void) { return g_h; }
 
 KhGsPacket *kh_gs_frame_packet(void) { return &g_frame_pkt[g_draw]; }
@@ -198,7 +261,7 @@ KhGsPacket *kh_gs_frame_packet(void) { return &g_frame_pkt[g_draw]; }
 void kh_video_begin_frame(uint32_t rgb)
 {
     KhGsPacket *p = &g_frame_pkt[g_draw];
-    p->len = 0;
+    kh_gs_chain_begin(p);
     kh_gs_packet_ad_begin(p, 12);
     ad(p, GS_REG_FRAME_1, GS_SET_FRAME(g_fbp[g_draw] / 2048, g_w / 64, GS_PSM_32, 0));
     ad(p, GS_REG_ZBUF_1, GS_SET_ZBUF(g_zbp / 2048, GS_PSMZ_24, 0));
@@ -253,7 +316,7 @@ void kh_video_debug_text(int x, int y, uint32_t rgb, const char *fmt, ...)
     ad(p, GS_REG_TEST_1, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, 2));
 }
 
-void kh_video_end_frame(void)
+void kh_video_submit_frame(void)
 {
     KhGsPacket *p = &g_frame_pkt[g_draw];
     kh_gs_packet_ad_begin(p, 1);
@@ -261,12 +324,25 @@ void kh_video_end_frame(void)
 
     kh_prof_begin(KH_PROF_GS_WAIT);
     *(volatile uint64_t *)0x12001000 = 2;       /* clear CSR.FINISH */
-    kh_gs_packet_send(p);
+    kh_gs_chain_send(p);
     while (!(*(volatile uint64_t *)0x12001000 & 2))
         ;
     kh_prof_end(KH_PROF_GS_WAIT);
+    g_flip_pending = 1;
+}
 
-    kh_vblank_wait();
+void kh_video_flip(void)
+{
+    if (!g_flip_pending)
+        return;
+    g_flip_pending = 0;
     graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, GS_PSM_32, 0, 0);
     g_draw ^= 1;
+}
+
+void kh_video_end_frame(void)
+{
+    kh_video_submit_frame();
+    kh_vblank_wait();
+    kh_video_flip();
 }

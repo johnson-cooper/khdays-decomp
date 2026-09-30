@@ -1,0 +1,20 @@
+# Sources flagged by prep_sources.py (R5) for touching side-effect registers that were reviewed
+# and are correct with the state mapping, so they need no override.  <path> <reason>
+src/engine/Coll_MeasureFaceDepth.c         polls DIVCNT only; result via FX_GetDivResultFx64c
+src/engine/Coll_TestRayFace.c              polls DIVCNT only; result via FX_GetDivResultFx64c
+src/engine/Coll_TestSpatialRayFace.c       polls DIVCNT only; result via FX_GetDivResultFx64c
+src/engine/Coll_TestRayAgainstFlatCap.c    writes DIV_NUMER/DENOM state, result via FX_GetDivResultFx64c
+src/engine/Coll_TestRayAgainstRoundedCap.c writes DIV_NUMER/DENOM state, result via FX_GetDivResultFx64c
+src/engine/RoomBox_HitTop.c                writes DIV_NUMER/DENOM state, result via FX_GetDivResultFx64c
+src/overlays/scenes/ov002_field/Ov002_SampleBlendTween.c          polls DIVCNT only
+src/overlays/scenes/ov002_field/Ov002_StepCaptionFade.c           polls DIVCNT only
+src/overlays/scenes/ov008_camp_menu/Ov008_TickPageBTransition.c   polls DIVCNT only
+src/overlays/scenes/ov008_camp_menu/Ov008_UpdateBrightnessAndCallbacks.c polls DIVCNT only
+src/overlays/scenes/ov009_camp_save/Ov009_Menu_VBlankTick.c       polls DIVCNT only
+src/overlays/screens/ov025_camp_menu_2/Ov025_TickPageBTransition.c polls DIVCNT only
+src/overlays/screens/ov025_camp_menu_2/Ov025_UpdateBrightnessAndCallbacks.c polls DIVCNT only
+src/overlays/system/ov001_boot/Ov001_BootInit.c        reads/writes IME (0x04000208): no-op as state
+src/overlays/system/ov001_boot/Ov001_SetupDisplayRegs.c SWAP_BUFFERS mode + VIEWPORT written as state; the geometry front end reads them
+libs/nitro/nns/calls/NNSi_G3dAnmBlendJnt.c  writes DIV/SQRT operands, spins on REG_DIVCNT/REG_SQRTCNT (computing accessors) then reads results
+libs/nitro/mtx/calls/MTX_OrthoW.c               writes DIV operands (state), results via FX_GetDivResultFx64c
+libs/nitro/mtx/calls/Camera_BuildProjectionMtx.c writes DIV operands (state), results via FX_GetDivResult*

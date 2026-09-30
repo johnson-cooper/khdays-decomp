@@ -151,7 +151,9 @@ int  kh_video_init(KhVideoMode mode);
 int  kh_video_width(void);
 int  kh_video_height(void);
 void kh_video_begin_frame(uint32_t clear_rgb);
-void kh_video_end_frame(void);               /* kick, wait for GS, flip on next VBlank */
+void kh_video_end_frame(void);               /* submit + wait for the next VBlank + flip */
+void kh_video_submit_frame(void);            /* kick the frame, wait for the GS to finish drawing */
+void kh_video_flip(void);                    /* show the submitted frame; call right after a VBlank */
 /* Debug text drawn on top of the frame (small built-in font); cleared every frame. */
 void kh_video_debug_text(int x, int y, uint32_t rgb, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 

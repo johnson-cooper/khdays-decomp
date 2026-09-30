@@ -1,0 +1,22 @@
+# Decomp sources left out of the PS2 build.  A trailing "/" excludes a directory.
+# Every entry says why; functions replaced by a PS2 version go to ps2/overrides instead.
+
+# DS Protect anti-tamper (encrypted ARM code, cart checks) - meaningless on PS2.  Its callers
+# (Ov001_CreateMainAndSubHeaps, ...) are overridden.
+src/overlays/system/ov028_dsprotect/
+
+# MobiClip player: C++ over ARM assembly kernels.  Video is a logged temporary skip until the
+# portable decoder (libs/mobiclip/video/portable) is brought up - see docs/PS2_PORT.md 3.20.
+src/overlays/system/ov024_mobiclip/
+
+# Library assembly never runs on the EE.
+asm_stubs/
+
+# MSL C standard functions: newlib provides the same standard behaviour (and MIPS-tuned code).
+strcmp.c
+strcpy.c
+strlen.c
+strncmp.c
+strncpy.c
+strtol.c
+abs.c

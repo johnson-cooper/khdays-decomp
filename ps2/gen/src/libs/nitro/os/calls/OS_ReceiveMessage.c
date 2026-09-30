@@ -1,0 +1,27 @@
+/* PS2: mechanically prepared copy of libs/nitro/os/calls/OS_ReceiveMessage.c (ps2/tools/prep_sources.py). Do not edit. */
+extern int OS_DisableInterrupts(void);
+extern void OS_RestoreInterrupts(int state);
+extern void OS_SleepThread(void *queue);
+extern void OS_WakeupThread(void *queue);
+extern long long kh_rt_s32_divmod(int a, int b);
+
+/* Pops the oldest message. Without the blocking flag an empty queue fails instead of waiting. */
+int OS_ReceiveMessage(char *q, void **out, int flags) {
+    int enabled = OS_DisableInterrupts();
+    while (*(int *)(q + 0x1c) == 0) {
+        if ((flags & 1) == 0) {
+            OS_RestoreInterrupts(enabled);
+            return 0;
+        }
+        OS_SleepThread(q + 8);
+    }
+    if (out != 0) {
+        *out = (*(void ***)(q + 0x10))[*(int *)(q + 0x18)];
+    }
+    *(int *)(q + 0x18) = (int)(kh_rt_s32_divmod(
+        *(int *)(q + 0x18) + 1, *(int *)(q + 0x14)) >> 32);
+    *(int *)(q + 0x1c) = *(int *)(q + 0x1c) - 1;
+    OS_WakeupThread(q);
+    OS_RestoreInterrupts(enabled);
+    return 1;
+}

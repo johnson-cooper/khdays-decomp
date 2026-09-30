@@ -22,7 +22,7 @@
 #define EE_RAM (32u * MB)
 
 #ifndef KH_GAME_ARENA_SIZE
-#define KH_GAME_ARENA_SIZE (6u * MB)
+#define KH_GAME_ARENA_SIZE (4u * MB)   /* the DS had < 4 MiB for code AND data */
 #endif
 
 static const uint32_t k_life_cap[KH_LIFE_COUNT] = {
@@ -54,9 +54,15 @@ void kh_mem_init(void)
     if (g_inited)
         return;
     g_inited = 1;
+    /* First allocation, so it sits right after the ELF.  The game packs pointers into 24-bit
+     * handles (see KH_DS_PACKED_PTR_BASE), which only works if the ELF's data and the arena all
+     * lie in the first 16 MiB. */
     g_game_arena = memalign(64, KH_GAME_ARENA_SIZE);
     if (!g_game_arena)
         kh_panic("cannot reserve the %u KiB game arena", KH_GAME_ARENA_SIZE / KB);
+    if ((uintptr_t)g_game_arena + KH_GAME_ARENA_SIZE > 0x01000000u)
+        kh_panic("game arena %p-%p crosses 16 MiB (ELF too large: ends at %p)", (void *)g_game_arena,
+                 (void *)(g_game_arena + KH_GAME_ARENA_SIZE), (void *)_end);
     memset(g_game_arena, 0, KH_GAME_ARENA_SIZE);
     g_cat_used[KH_MEM_GAME_HEAP] += KH_GAME_ARENA_SIZE;
     for (i = 1; i < KH_LIFE_COUNT; i++) {

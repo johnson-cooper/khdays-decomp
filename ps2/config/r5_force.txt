@@ -1,0 +1,6 @@
+# (file, literal) pairs prep_sources.py R5 maps even outside an address context, after review.
+# NitroSystem computes BG VRAM CPU pointers as window base + offset:
+libs/nitro/nns/calls/BgCharVram_Upload.c 0x06000000
+libs/nitro/nns/calls/BgCharVram_Upload.c 0x06200000
+libs/nns/g2d/calls/LoadBGCharacter.c 0x06000000
+libs/nns/g2d/calls/LoadBGCharacter.c 0x06200000

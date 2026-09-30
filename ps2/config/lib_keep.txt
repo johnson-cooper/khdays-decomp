@@ -1,0 +1,6 @@
+# Library sources the automatic hardware scan (ps2/tools/libscan.py) would exclude but that are
+# correct on the PS2 after prep_sources.py R5: they only write the divider/sqrt operand
+# registers (mapped to the divider state block) and read results through FX_GetDivResult*,
+# FX_GetSqrtResult (ps2/src/nitro/nitro_cp.c).  Reviewed one by one.
+libs/nitro/mtx/calls/MTX_OrthoW.c
+libs/nitro/mtx/calls/Camera_BuildProjectionMtx.c

@@ -1,0 +1,32 @@
+/* PS2: mechanically prepared copy of src/overlays/enemies/ov200_enemy_guardian/Ov200_RingBufferFillSlot.c (ps2/tools/prep_sources.py). Do not edit. */
+/*
+ * Ov200_RingBufferFillSlot -- x3 (ov200/...). Fill the next ring-buffer slot and advance the write index.
+ * slot = *(*param1+0x90) + index*0x38 (index = param1[1]). Set slot[0]=0x3000, copy the vec3 at param2
+ * into slot+0x2c. For the orientation block at slot+8: if param3 is null, load the const at
+ * data_020420f8; otherwise build a look-at via 0202ed60(slot+8, &data_02042258, param3). Finally wrap
+ * the index: {ret, param1[1]} = divmod(index+1, capacity=*(*param1+0x8c)) and return the quotient.
+ */
+
+#include "nitro/fx_types.h"
+
+struct vec4 { int a, b, c, d; };
+extern void Quat_FromTwoVectors(unsigned int *out, void *basis, int *v);
+extern long long kh_rt_s32_divmod(int num, int den);
+extern int data_02042258;
+extern struct vec4 data_020420f8;
+
+int Ov200_RingBufferFillSlot(int *param1, int *param2, int *param3) {
+    int slot = *(int *)(*param1 + 0x90) + param1[1] * 0x38;
+    unsigned long long r;
+
+    *(int *)(*(int *)(*param1 + 0x90) + param1[1] * 0x38) = 0x3000;
+    *(VecFx32 *)(slot + 0x2c) = *(VecFx32 *)param2;
+    if (param3 != 0) {
+        Quat_FromTwoVectors((unsigned int *)(slot + 8), &data_02042258, param3);
+    } else {
+        *(struct vec4 *)(slot + 8) = data_020420f8;
+    }
+    r = kh_rt_s32_divmod(param1[1] + 1, *(int *)(*param1 + 0x8c));
+    param1[1] = (int)(r >> 32);
+    return (int)r;
+}
