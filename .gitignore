@@ -108,3 +108,11 @@ build/completed_functions/
 
 # Agent working files: sweep scripts, receipts and diff helpers.
 scratchpad/
+
+# ── PS2 port ──────────────────────────────────────────────────────────────────
+/ps2data/
+/build/bin/
+/build/obj/
+/build/*.ninja
+/build/compile_commands.json
+/build/ps2/

@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Audit the decomp for Nintendo DS platform dependencies.
+
+Scans the game's own code (src/) for:
+  * calls/references to functions and data defined in the libraries (libs/),
+    grouped by library module (nitro/gx, nns/g3d, ...);
+  * direct hardware/fixed-address accesses (I/O registers, VRAM, palette, OAM,
+    the ARM7 shared area, DTCM);
+  * inline assembly.
+
+Output is a Markdown report (default build/ps2/audit.md) plus a JSON dump used
+by the other PS2 tools.  Run from the repository root:
+
+    python ps2/tools/audit_deps.py
+"""
+import collections
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+HWADDR = re.compile(r"\b0x0*(0?4[0-9a-fA-F]{6}|0?5[0-9a-fA-F]{6}|0?6[0-9a-fA-F]{6}|0?7[0-9a-fA-F]{6}|027[ef][0-9a-fA-F]{4}|023f[0-9a-fA-F]{4}|01ff[0-9a-fA-F]{4})\b")
+ASM = re.compile(r"\basm\b|__asm\b|\b__asm__\b")
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+
+
+def region_of(addr):
+    a = int(addr, 16)
+    if 0x04000000 <= a < 0x05000000:
+        if a >= 0x04100000:
+            return "io:ipc/card-data"
+        if 0x04000400 <= a < 0x04000700:
+            return "io:3d-geometry"
+        if 0x04000300 <= a < 0x04000400:
+            return "io:power/3d-ctrl/irq"
+        if 0x04000200 <= a < 0x04000300:
+            return "io:irq/div/sqrt/wram"
+        if 0x04000100 <= a < 0x04000200:
+            return "io:timer/pad/ipc"
+        if 0x040000b0 <= a < 0x04000100:
+            return "io:dma"
+        if 0x04001000 <= a < 0x04001100:
+            return "io:2d-sub"
+        return "io:2d-main"
+    if 0x05000000 <= a < 0x06000000:
+        return "palette-ram"
+    if 0x06000000 <= a < 0x07000000:
+        return "vram"
+    if 0x07000000 <= a < 0x08000000:
+        return "oam"
+    if 0x027e0000 <= a < 0x027f0000:
+        return "dtcm"
+    if 0x027f0000 <= a < 0x02800000:
+        return "main-ram-shared(arm7/os)"
+    if 0x023f0000 <= a < 0x02400000:
+        return "main-ram-high"
+    if 0x01ff0000 <= a < 0x02000000:
+        return "itcm"
+    return "other"
+
+
+def walk(top, exts=(".c", ".cpp", ".s")):
+    for dp, dn, fn in os.walk(top):
+        dn.sort()
+        for f in sorted(fn):
+            if f.endswith(exts):
+                yield os.path.join(dp, f)
+
+
+def lib_module(path):
+    rel = os.path.relpath(path, os.path.join(ROOT, "libs")).replace("\\", "/")
+    parts = rel.split("/")
+    return parts[0] + "/" + parts[1]
+
+
+def game_module(path):
+    rel = os.path.relpath(path, ROOT).replace("\\", "/")
+    parts = rel.split("/")
+    if parts[1] == "engine":
+        return "engine"
+    return parts[3] if len(parts) > 3 else parts[2]
+
+
+def main():
+    out_dir = os.path.join(ROOT, "build", "ps2")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # 1. library-defined names: every source file defines the function it is named after
+    lib_def = {}
+    for p in walk(os.path.join(ROOT, "libs")):
+        name = os.path.splitext(os.path.basename(p))[0]
+        lib_def.setdefault(name, lib_module(p))
+    # library data symbols (from the symbol maps, attributed by address range is overkill:
+    # data used by game code through well-known names is caught by the identifier scan)
+
+    game_def = set()
+    game_files = list(walk(os.path.join(ROOT, "src")))
+    for p in game_files:
+        game_def.add(os.path.splitext(os.path.basename(p))[0])
+
+    uses = collections.defaultdict(lambda: collections.Counter())   # lib func -> module -> count
+    mod_uses = collections.defaultdict(lambda: collections.Counter())  # game module -> lib module -> count
+    hw = collections.defaultdict(list)  # region -> [(file, addr)]
+    asm_files = []
+
+    for p in game_files:
+        try:
+            text = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        code = COMMENT.sub(" ", text)
+        gm = game_module(p)
+        seen = set()
+        for ident in IDENT.findall(code):
+            if ident in lib_def and ident not in game_def and ident not in seen:
+                seen.add(ident)
+                uses[ident][gm] += 1
+                mod_uses[gm][lib_def[ident]] += 1
+        for m in HWADDR.finditer(code):
+            hw[region_of(m.group(1))].append((os.path.relpath(p, ROOT).replace("\\", "/"), m.group(0)))
+        if p.endswith(".c") and ASM.search(code):
+            asm_files.append(os.path.relpath(p, ROOT).replace("\\", "/"))
+
+    by_libmod = collections.defaultdict(dict)
+    for f, c in uses.items():
+        by_libmod[lib_def[f]][f] = sum(c.values())
+
+    json.dump({
+        "lib_functions_used": {k: dict(v) for k, v in uses.items()},
+        "lib_def": lib_def,
+        "hw": {k: v for k, v in hw.items()},
+        "asm_files": asm_files,
+    }, open(os.path.join(out_dir, "audit.json"), "w"), indent=1)
+
+    lines = ["# DS dependency audit (generated by ps2/tools/audit_deps.py)", ""]
+    lines.append(f"Game sources scanned: {len(game_files)}; library functions known: {len(lib_def)}; "
+                 f"library functions referenced by game code: {len(uses)}")
+    lines.append("")
+    lines.append("## Library modules referenced by game code")
+    lines.append("")
+    lines.append("| Library module | Distinct functions used | Total referencing files |")
+    lines.append("|---|---:|---:|")
+    for lm in sorted(by_libmod, key=lambda k: -sum(by_libmod[k].values())):
+        lines.append(f"| {lm} | {len(by_libmod[lm])} | {sum(by_libmod[lm].values())} |")
+    lines.append("")
+    lines.append("## Hardware / fixed-address accesses in game code")
+    lines.append("")
+    lines.append("| Region | References | Files |")
+    lines.append("|---|---:|---:|")
+    for r in sorted(hw, key=lambda k: -len(hw[k])):
+        lines.append(f"| {r} | {len(hw[r])} | {len(set(f for f, _ in hw[r]))} |")
+    lines.append("")
+    lines.append(f"## Game C files containing inline asm: {len(asm_files)}")
+    lines.append("")
+    for f in asm_files:
+        lines.append(f"- `{f}`")
+    lines.append("")
+    lines.append("## Functions used, per library module")
+    for lm in sorted(by_libmod):
+        lines.append("")
+        lines.append(f"### {lm}")
+        lines.append("")
+        for f, n in sorted(by_libmod[lm].items(), key=lambda kv: (-kv[1], kv[0])):
+            lines.append(f"- `{f}` ({n})")
+    open(os.path.join(out_dir, "audit.md"), "w").write("\n".join(lines) + "\n")
+    print("\n".join(lines[:60]))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,25 @@
+# Kingdom Hearts 358/2 Days - native PlayStation 2 port.
+# Build with:  ps2build build        (or ./build-ps2.sh, which also regenerates generated parts)
+# Output:      build/bin/khdays-ps2.elf, build/bin/khdays-platform-test.elf
+project: khdays-ps2
+
+targets:
+  # PS2 platform layer (boot, log, memory, time, VFS, pad, GS, audio device, profiling).
+  - name: kh_platform
+    type: ee_lib
+    sources:
+      - ps2/src/platform/*.c
+      - ps2/src/gfx/*.c
+    include_dirs: [ps2/include, ps2/src/platform]
+    headers: [kernel, graph, draw, dma, packet2, pad, audsrv, filexio, patches, debug]
+    cflags: [-std=gnu11, -Wall, -Wno-unused-function, -Wno-format]
+
+  # Platform bring-up test ELF: boots the platform layer and shows live diagnostics.
+  - name: khdays-platform-test
+    type: ee
+    sources:
+      - ps2/src/bringup/platform_test.c
+    include_dirs: [ps2/include]
+    cflags: [-std=gnu11, -Wall, -Wno-format]
+    libs: [kh_platform, graph, draw, dma, packet2, pad, audsrv, filexio, patches, debug, m]
+    embed_irx: [sio2man, padman, mcman, mcserv, iomanx, filexio, usbd, bdm, bdmfs_fatfs, usbmass_bd, mmceman, dev9, atad, hdd, fs, libsd, audsrv]
