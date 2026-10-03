@@ -165,10 +165,22 @@ void OS_WaitVBlankIntr(void)
     if (kh_vblank_count() < KH_BOOT_TRACE_VBLANKS && kh_watchdog_progress % 30 == 1)
         KH_INFO("boot", "main loop: %u VBlank waits", (unsigned)kh_watchdog_progress);
 #endif
+#if KH_PS2_DEBUG
+    {
+        extern volatile const char *kh_watchdog_mark;
+        kh_watchdog_mark = "main: waiting for VBlank";
+    }
+#endif
     kh_prof_begin(KH_PROF_VBLANK);
     kh_vblank_wait();
     kh_prof_end(KH_PROF_VBLANK);
     vblank_service();
+#if KH_PS2_DEBUG
+    {
+        extern volatile const char *kh_watchdog_mark;
+        kh_watchdog_mark = "main: frame work";
+    }
+#endif
 }
 
 /* For loops that busy-wait on the DS while its VBlank interrupt works in the background (the movie
