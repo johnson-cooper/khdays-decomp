@@ -33,7 +33,10 @@ IRX = ["sio2man", "padman", "mcman", "mcserv", "iomanx", "filexio", "usbd", "bdm
 SDK_LIBS = ["graph", "draw", "dma", "packet2", "pad", "filexio", "patches", "debug", "eedebug", "mc", "m"]
 PLATFORM_HEADERS = ["kernel", "graph", "draw", "dma", "packet2", "pad", "filexio", "patches", "debug", "eedebug", "mc"]
 DEBUG = os.environ.get("KH_PS2_DEBUG", "0").lower() not in ("", "0", "false", "no", "off")
+HEAP_CHECK = os.environ.get("KH_PS2_HEAP_CHECK", "0").lower() not in ("", "0", "false", "no", "off")
 DEBUG_DEFINES = ["KH_PS2_DEBUG=1", "KH_PS2_PROFILE=1"] if DEBUG else []
+if HEAP_CHECK:
+    DEBUG_DEFINES.append("KH_PS2_HEAP_CHECK=1")
 
 
 def rel(p):
