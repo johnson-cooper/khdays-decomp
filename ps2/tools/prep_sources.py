@@ -64,13 +64,12 @@ the original.  Every rule is mechanical and listed here:
   R18 the cloned GetVarRecordByIndex functions walk even-sized, length-prefixed message records.
       ARMv5's LDR accepts their 2-mod-4 length fields (with rotate semantics); EE lw raises AdEL.
       Read those little-endian fields bytewise through kh_read_s32_le_unaligned instead.
-  R19 confirmed 64-bit accesses reconstructed at offsets that are only 4-byte aligned are
-      accessed through kh_unaligned.h.  R5900 ld/sd require 8-byte alignment; the DS layout
-      and -fpack-struct=4 ABI stay untouched.  After all preparation rules, every PS2-bound
-      source is also audited for direct 64-bit pointer dereferences whose address expression
-      has a statically provable non-8-byte effective displacement; typed pointer arithmetic is
-      scaled by its pointee size instead of being mistaken for raw byte arithmetic. Preparation
-      fails rather than emitting a new hardware-only AdEL/AdES candidate.
+  R19 confirmed packed 64-bit struct fields are handled through kh_unaligned.h.  In addition,
+      every remaining direct u64/s64/long-long pointer dereference is mechanically rewritten to
+      an alignment-1 packed lvalue slot before EE compilation.  This preserves reads, writes and
+      compound assignments without trying to infer pointer arithmetic, while preventing GCC from
+      assuming an 8-byte-aligned address.  Any direct 64-bit cast shape the rewriter cannot
+      understand still fails preparation for review.
   R15 literal ITCM addresses of data embedded in ITCM code (0x01ff8000-0x01ffffff is the top of
       EE RAM, the main thread's stack) become the PS2 definitions of that data, listed in
       ITCM_DATA (ps2/src/nitro/nitro_itcm_data.c), e.g. G3D's texture-matrix builder tables.
@@ -403,16 +402,19 @@ def unaligned_r5900_u64(text, relp):
     return '#include "platform/kh_unaligned.h"\n' + text
 
 
-# Direct 64-bit pointer casts are particularly dangerous on the R5900: gcc may emit ld/sd
-# even when the decompiled DS address expression is only 4-byte aligned.  The explicit table
-# above fixes accesses whose source shape is known; this second line of defence rejects the same
-# class when it is written with another 64-bit spelling or appears in another PS2-bound file.
+# Direct 64-bit pointer casts are particularly dangerous on the R5900: the cast itself tells
+# GCC that the address is naturally 8-byte aligned, even when the Nintendo DS layout is only
+# 4-byte aligned.  Do not try to infer whether each expression is safe.  Rewrite every remaining
+# direct 64-bit pointer dereference to an alignment-1 packed slot.  Because the result is still
+# an lvalue, ordinary reads, stores and compound assignments keep their C semantics.
 R19_U64_DEREF = re.compile(
-    r"\*\s*\(\s*(?:(?:const|volatile)\s+)*"
-    r"(?:u64|s64|uint64_t|int64_t|(?:(?:unsigned|signed)\s+)?long\s+long)"
-    r"\s*\*\s*\)"
+    r"\*\s*\(\s*(?P<quals>(?:(?:const|volatile)\s+)*)"
+    r"(?P<type>unsigned\s+long\s+long|signed\s+long\s+long|long\s+long|"
+    r"uint64_t|int64_t|u64|s64)\s*\*\s*\)"
 )
 R19_AUDIT_FILES = 0
+R19_AUTO_FILES = set()
+R19_AUTO_DEREFS = 0
 
 
 def _r19_code_only(text):
@@ -434,90 +436,71 @@ def _r19_matching_paren(text, pos):
     return -1
 
 
-R19_POINTEE_SIZES = {
-    "char": 1, "signed char": 1, "unsigned char": 1, "u8": 1, "s8": 1,
-    "short": 2, "signed short": 2, "unsigned short": 2, "u16": 2, "s16": 2,
-    "int": 4, "signed int": 4, "unsigned int": 4, "u32": 4, "s32": 4,
-    "long": 4, "signed long": 4, "unsigned long": 4,
-    "long long": 8, "signed long long": 8, "unsigned long long": 8,
-    "u64": 8, "s64": 8, "uint64_t": 8, "int64_t": 8,
-}
-R19_PTR_CAST = re.compile(
-    r"\(\s*(?:(?:const|volatile)\s+)*"
-    r"(unsigned\s+long\s+long|signed\s+long\s+long|long\s+long|"
-    r"unsigned\s+long|signed\s+long|long|unsigned\s+int|signed\s+int|int|"
-    r"unsigned\s+short|signed\s+short|short|unsigned\s+char|signed\s+char|char|"
-    r"uint64_t|int64_t|u64|s64|u32|s32|u16|s16|u8|s8)\s*\*\s*\)"
-)
+def rewrite_r5900_u64_derefs(text, relp):
+    """R19: make every direct 64-bit pointer-cast dereference alignment-safe on the EE."""
+    global R19_AUTO_DEREFS
+    if ps2cfg.is_excluded(relp):
+        return text
 
+    code = _r19_code_only(text)
+    replacements = []
+    for m in R19_U64_DEREF.finditer(code):
+        pos = m.end()
+        while pos < len(code) and code[pos].isspace():
+            pos += 1
 
-def _r19_pointer_scale(expr, op_pos, code):
-    """Return byte scale for pointer arithmetic when the pointee type is provable."""
-    prefix = expr[:op_pos].rstrip()
+        if pos < len(code) and code[pos] == "(":
+            end = _r19_matching_paren(code, pos)
+            if end < 0:
+                continue
+            addr = text[pos + 1:end]
+            replace_end = end + 1
+        else:
+            operand = re.match(
+                r"(?:[&*]\s*)?(?:"
+                r"[A-Za-z_]\w*(?:\s*(?:->|\.)\s*[A-Za-z_]\w*)*(?:\s*\[[^\]\n]+\])*"
+                r"|0[xX][0-9a-fA-F]+|\d+)",
+                code[pos:],
+            )
+            if not operand:
+                continue
+            replace_end = pos + operand.end()
+            addr = text[pos:replace_end]
 
-    # An explicit cast establishes the arithmetic type. For example, a char pointer
-    # plus 0x464 is a raw 0x464-byte displacement.
-    casts = list(R19_PTR_CAST.finditer(prefix))
-    if casts:
-        return R19_POINTEE_SIZES.get(" ".join(casts[-1].group(1).split()))
+        typ = " ".join(m.group("type").split())
+        unsigned = typ in ("u64", "uint64_t", "unsigned long long")
+        slot = "kh_unaligned_u64_slot" if unsigned else "kh_unaligned_s64_slot"
+        quals = " ".join(m.group("quals").split())
+        slot_type = (quals + " " if quals else "") + slot
+        replacement = f"((({slot_type} *)({addr}))->value)"
+        replacements.append((m.start(), replace_end, replacement))
 
-    # Resolve common simple pointer variables such as int *state. If the pointee type
-    # is not obvious, do not guess here; the emitted ld/sd audit remains the backstop.
-    base = re.search(r"([A-Za-z_]\w*)\s*$", prefix)
-    if not base:
-        return None
-    name = re.escape(base.group(1))
-    decl = re.search(
-        r"\b(unsigned\s+long\s+long|signed\s+long\s+long|long\s+long|"
-        r"unsigned\s+long|signed\s+long|long|unsigned\s+int|signed\s+int|int|"
-        r"unsigned\s+short|signed\s+short|short|unsigned\s+char|signed\s+char|char|"
-        r"uint64_t|int64_t|u64|s64|u32|s32|u16|s16|u8|s8)\s*\*\s*" + name + r"\b",
-        code,
-    )
-    if not decl:
-        return None
-    return R19_POINTEE_SIZES.get(" ".join(decl.group(1).split()))
+    if not replacements:
+        return text
+
+    for start, end, replacement in reversed(replacements):
+        text = text[:start] + replacement + text[end:]
+
+    if '#include "platform/kh_unaligned.h"' not in text:
+        text = '#include "platform/kh_unaligned.h"\n' + text
+    R19_AUTO_FILES.add(relp)
+    R19_AUTO_DEREFS += len(replacements)
+    return text
 
 
 def audit_r5900_u64_casts(text, relp):
-    """Fail on statically provable non-8-byte direct u64/s64 pointer dereferences."""
+    """Fail only when a direct 64-bit pointer dereference escaped the automatic R19 rewrite."""
     global R19_AUDIT_FILES
     if ps2cfg.is_excluded(relp):
         return
     R19_AUDIT_FILES += 1
     code = _r19_code_only(text)
-    bad = []
-    for m in R19_U64_DEREF.finditer(code):
-        pos = m.end()
-        while pos < len(code) and code[pos].isspace():
-            pos += 1
-        expr = None
-        if pos < len(code) and code[pos] == "(":
-            end = _r19_matching_paren(code, pos)
-            if end >= 0:
-                expr = code[pos + 1:end]
-        else:
-            lit = re.match(r"0[xX][0-9a-fA-F]+|\d+", code[pos:])
-            if lit and (int(lit.group(0), 0) & 7):
-                bad.append((code.count("\n", 0, m.start()) + 1, lit.group(0)))
-        if expr is None:
-            continue
-        for off in re.finditer(r"[+-]\s*(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b", expr):
-            scale = _r19_pointer_scale(expr, off.start(), code)
-            if scale is None:
-                continue
-            value = int(off.group(1), 0) * scale
-            if value & 7:
-                bad.append((
-                    code.count("\n", 0, m.start()) + 1,
-                    f"{off.group(0).strip()} => {value:#x} byte displacement",
-                ))
-                break
-    if bad:
-        where = ", ".join(f"line {line} ({off})" for line, off in bad[:8])
+    left = list(R19_U64_DEREF.finditer(code))
+    if left:
+        lines = ", ".join(str(code.count("\n", 0, m.start()) + 1) for m in left[:8])
         raise SystemExit(
-            f"prep R19 audit: unsafe direct 64-bit dereference in {relp}: {where}; "
-            "use platform/kh_unaligned.h or add a reviewed mechanical R19 transform"
+            f"prep R19 audit: unhandled direct 64-bit dereference in {relp}: line(s) {lines}; "
+            "extend the mechanical operand parser rather than adding per-file alignment guesses"
         )
 
 
@@ -791,6 +774,7 @@ def main():
                 new = PACKED_BASE.sub("+ KH_DS_PACKED_PTR_BASE", new)
                 new = strip_comments_aware_sub(new, relp)
                 new = geometry_port_pointers(new, relp)
+                new = rewrite_r5900_u64_derefs(new, relp)
                 audit_r5900_u64_casts(new, relp)
                 if new != text:
                     dst = os.path.join(OUT, relp)
@@ -820,6 +804,9 @@ def main():
     with open(os.path.join(ROOT, "build", "ps2", "hw_ambiguous.txt"), "w") as f:
         for relp, lit, ctx in AMBIGUOUS:
             f.write(f"{relp}\t{lit}\t{ctx}\n")
+    with open(os.path.join(ROOT, "build", "ps2", "r19_auto_files.txt"), "w") as f:
+        for relp in sorted(R19_AUTO_FILES):
+            f.write(relp + "\n")
     ok = set()
     okp = os.path.join(ROOT, "ps2", "config", "semantic_ok.txt")
     if os.path.exists(okp):
@@ -835,7 +822,8 @@ def main():
           f"{len(R16_HITS)} geometry register pointers routed to the engine (R16); "
           f"{len(R17_FILES)} data files aligned (R17); "
           f"{len(R18_HITS)} packed record walkers made alignment-safe (R18); "
-          f"{len(R19_HITS)} confirmed sources made 64-bit alignment-safe; "
+          f"{len(R19_HITS)} confirmed packed-field sources made 64-bit alignment-safe; "
+          f"{R19_AUTO_DEREFS} direct 64-bit dereferences auto-rewritten across {len(R19_AUTO_FILES)} files; "
           f"{R19_AUDIT_FILES} PS2-bound sources passed the direct-u64 audit (R19)")
     for h in R16_HITS:
         print("  R16", h)
