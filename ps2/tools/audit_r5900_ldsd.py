@@ -2,15 +2,15 @@
 """Post-link R5900 audit for suspicious 64-bit memory instructions.
 
 The EE raises an address error for ordinary ld/sd on a non-8-byte address.  Source preparation
-(R19 in prep_sources.py) rewrites the confirmed DS-layout accesses that are only 4-byte aligned.
-This tool inspects the code that GCC actually emitted so those confirmed fixes cannot silently
-regress because of a compiler/source-shape change.
+(R19 in prep_sources.py) rewrites confirmed packed fields and mechanically routes direct 64-bit
+pointer dereferences through alignment-1 lvalue slots.  This tool inspects the code GCC actually
+emitted so those fixes cannot silently regress because of a compiler/source-shape change.
 
 A repository-wide list of ld/sd instructions whose immediate is not a multiple of eight is also
 written to build/ps2/r5900_ldsd.txt.  The immediate alone cannot prove the effective address is
 misaligned (the base register may itself be offset), so that wider list is evidence for review,
-not an automatic failure.  In the confirmed R19 functions, however, such an instruction is a
-regression and fails the build.
+not an automatic failure.  In functions touched by confirmed or automatic R19 handling, however, such an instruction is a
+regression candidate and fails the build.
 """
 import os
 import re
@@ -22,7 +22,15 @@ import ps2cfg  # noqa: E402
 import prep_sources  # noqa: E402
 
 ROOT = ps2cfg.ROOT
-KNOWN = {os.path.splitext(os.path.basename(p))[0] for p in prep_sources.TITLE_U64_UNALIGNED}
+KNOWN = {os.path.splitext(os.path.basename(p))[0] for p in prep_sources.R19_U64_UNALIGNED}
+_manifest = os.path.join(ROOT, "build", "ps2", "r19_auto_files.txt")
+if os.path.isfile(_manifest):
+    with open(_manifest, encoding="utf-8") as _f:
+        KNOWN.update(
+            os.path.splitext(os.path.basename(line.strip()))[0]
+            for line in _f
+            if line.strip()
+        )
 
 FUNC = re.compile(r"^[0-9a-fA-F]+ <([^>]+)>:$")
 INSN = re.compile(
@@ -102,7 +110,7 @@ def main():
             "R5900 audit: confirmed R19 function still emits ld/sd at a non-8-byte offset"
         )
 
-    print(f"R5900 audit: {len(KNOWN)} confirmed R19 functions clean; "
+    print(f"R5900 audit: {len(KNOWN)} R19-covered functions clean; "
           f"{len(candidates)} global ld/sd candidates recorded in build/ps2/r5900_ldsd.txt")
 
 
