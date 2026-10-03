@@ -65,11 +65,11 @@ the original.  Every rule is mechanical and listed here:
       ARMv5's LDR accepts their 2-mod-4 length fields (with rotate semantics); EE lw raises AdEL.
       Read those little-endian fields bytewise through kh_read_s32_le_unaligned instead.
   R19 confirmed packed 64-bit struct fields are handled through kh_unaligned.h.  In addition,
-      every remaining direct u64/s64/long-long pointer dereference is mechanically rewritten to
-      an alignment-1 packed lvalue slot before EE compilation.  This preserves reads, writes and
-      compound assignments without trying to infer pointer arithmetic, while preventing GCC from
-      assuming an 8-byte-aligned address.  Any direct 64-bit cast shape the rewriter cannot
-      understand still fails preparation for review.
+      every remaining direct u64/s64/long-long pointer dereference is mechanically retargeted to
+      an alignment-1 scalar typedef before EE compilation.  Only the cast type changes, so
+      arbitrarily complex operands, reads, writes and compound assignments keep normal C
+      semantics without any expression parser.  Any direct 64-bit cast spelling not covered by
+      the type matcher still fails preparation for review.
   R15 literal ITCM addresses of data embedded in ITCM code (0x01ff8000-0x01ffffff is the top of
       EE RAM, the main thread's stack) become the PS2 definitions of that data, listed in
       ITCM_DATA (ps2/src/nitro/nitro_itcm_data.c), e.g. G3D's texture-matrix builder tables.
@@ -404,13 +404,14 @@ def unaligned_r5900_u64(text, relp):
 
 # Direct 64-bit pointer casts are particularly dangerous on the R5900: the cast itself tells
 # GCC that the address is naturally 8-byte aligned, even when the Nintendo DS layout is only
-# 4-byte aligned.  Do not try to infer whether each expression is safe.  Rewrite every remaining
-# direct 64-bit pointer dereference to an alignment-1 packed slot.  Because the result is still
-# an lvalue, ordinary reads, stores and compound assignments keep their C semantics.
+# 4-byte aligned.  R19 changes only the pointee type to an aligned(1) scalar alias.  Because the
+# operand is untouched, this works for arbitrary expressions such as &(p)->field without having
+# to parse C expression grammar, and the dereference remains an ordinary scalar lvalue.
 R19_U64_DEREF = re.compile(
-    r"\*\s*\(\s*(?P<quals>(?:(?:const|volatile)\s+)*)"
+    r"\*\s*\(\s*(?P<pre>(?:(?:const|volatile)\s+)*)"
     r"(?P<type>unsigned\s+long\s+long|signed\s+long\s+long|long\s+long|"
-    r"uint64_t|int64_t|u64|s64)\s*\*\s*\)"
+    r"uint64_t|int64_t|u64|s64)"
+    r"(?P<post>(?:\s+(?:const|volatile))*)\s*\*\s*\)"
 )
 R19_AUDIT_FILES = 0
 R19_AUTO_FILES = set()
@@ -424,72 +425,46 @@ def _r19_code_only(text):
                   blank, text, flags=re.S)
 
 
-def _r19_matching_paren(text, pos):
-    depth = 0
-    for i in range(pos, len(text)):
-        if text[i] == "(":
-            depth += 1
-        elif text[i] == ")":
-            depth -= 1
-            if depth == 0:
-                return i
-    return -1
-
-
 def rewrite_r5900_u64_derefs(text, relp):
-    """R19: make every direct 64-bit pointer-cast dereference alignment-safe on the EE."""
+    """R19: retarget every direct 64-bit pointer dereference to an alignment-1 scalar type."""
     global R19_AUTO_DEREFS
     if ps2cfg.is_excluded(relp):
         return text
 
-    code = _r19_code_only(text)
-    replacements = []
-    for m in R19_U64_DEREF.finditer(code):
-        pos = m.end()
-        while pos < len(code) and code[pos].isspace():
-            pos += 1
+    count = [0]
 
-        if pos < len(code) and code[pos] == "(":
-            end = _r19_matching_paren(code, pos)
-            if end < 0:
-                continue
-            addr = text[pos + 1:end]
-            replace_end = end + 1
-        else:
-            operand = re.match(
-                r"(?:[&*]\s*)?(?:"
-                r"[A-Za-z_]\w*(?:\s*(?:->|\.)\s*[A-Za-z_]\w*)*(?:\s*\[[^\]\n]+\])*"
-                r"|0[xX][0-9a-fA-F]+|\d+)",
-                code[pos:],
-            )
-            if not operand:
-                continue
-            replace_end = pos + operand.end()
-            addr = text[pos:replace_end]
-
+    def sub(m):
+        count[0] += 1
         typ = " ".join(m.group("type").split())
         unsigned = typ in ("u64", "uint64_t", "unsigned long long")
-        slot = "kh_unaligned_u64_slot" if unsigned else "kh_unaligned_s64_slot"
-        quals = " ".join(m.group("quals").split())
-        slot_type = (quals + " " if quals else "") + slot
-        replacement = f"((({slot_type} *)({addr}))->value)"
-        replacements.append((m.start(), replace_end, replacement))
+        alias = "kh_unaligned_u64" if unsigned else "kh_unaligned_s64"
+        quals = []
+        quals.extend(m.group("pre").split())
+        quals.extend(m.group("post").split())
+        qual = (" ".join(quals) + " ") if quals else ""
+        return f"*({qual}{alias} *)"
 
-    if not replacements:
+    # Use code-only text only to decide whether this source contains a candidate.  The actual
+    # substitution runs on source text; comments containing cast-looking prose are harmless
+    # because they cannot be matched as a dereference after preprocessing, but avoid adding the
+    # header unless executable code contains the pattern.
+    code = _r19_code_only(text)
+    if not R19_U64_DEREF.search(code):
         return text
 
-    for start, end, replacement in reversed(replacements):
-        text = text[:start] + replacement + text[end:]
+    text = R19_U64_DEREF.sub(sub, text)
+    if not count[0]:
+        return text
 
     if '#include "platform/kh_unaligned.h"' not in text:
         text = '#include "platform/kh_unaligned.h"\n' + text
     R19_AUTO_FILES.add(relp)
-    R19_AUTO_DEREFS += len(replacements)
+    R19_AUTO_DEREFS += count[0]
     return text
 
 
 def audit_r5900_u64_casts(text, relp):
-    """Fail only when a direct 64-bit pointer dereference escaped the automatic R19 rewrite."""
+    """Fail only when a direct native-alignment 64-bit pointer dereference escaped R19."""
     global R19_AUDIT_FILES
     if ps2cfg.is_excluded(relp):
         return
@@ -500,7 +475,7 @@ def audit_r5900_u64_casts(text, relp):
         lines = ", ".join(str(code.count("\n", 0, m.start()) + 1) for m in left[:8])
         raise SystemExit(
             f"prep R19 audit: unhandled direct 64-bit dereference in {relp}: line(s) {lines}; "
-            "extend the mechanical operand parser rather than adding per-file alignment guesses"
+            "extend the R19 type-spelling matcher rather than adding per-file alignment guesses"
         )
 
 
