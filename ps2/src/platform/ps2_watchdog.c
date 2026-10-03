@@ -4,7 +4,8 @@
  * not completed a VBlank wait since the last check (kh_watchdog_progress), the thread logs the
  * last breadcrumb (kh_watchdog_mark: the file being opened/read, ...) and the state of every EE
  * thread - running, ready, or waiting on which semaphore - and commits the log file.  It logs
- * once per stall, then again only if the stall goes on (every 10 s).
+ * once per stall, shows a GS-safe report only after 10 seconds, then refreshes the in-RAM
+ * evidence every 10 seconds while the stall continues.
  */
 #include "platform/kh_platform.h"
 #include "ps2_internal.h"
@@ -44,33 +45,49 @@ static void report(uint32_t now, int screen)
 {
     extern void *volatile kh_io_site[64];
     extern void ps2_log_ring(const char *line);
-    extern void ps2_log_print_recent(int lines);
     char line[160];
     int id;
-    if (screen) {
-        init_scr();
-        scr_clear();
-        scr_printf("\n  KH Days PS2 - hang report (main loop stalled, %u VBlank waits)\n", (unsigned)now);
-        scr_printf("  last mark: %s\n\n", kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
-    } else {
+
+    if (!screen) {
         snprintf(line, sizeof line, "[W watchdog] main loop stalled (%u VBlank waits), last mark: %s\n",
                  (unsigned)now, kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
         ps2_log_ring(line);
+    } else {
+        /* Never call libdebug init_scr() after the game owns the GS.  It assumes a PSMCT32
+         * framebuffer at VRAM 0, while this port uses full-height PSMCT16 FIELD buffers; on
+         * hardware that mismatch is the blue/patterned corruption previously seen during long
+         * loads.  Build a compact report and draw it through the game's own GS-safe path. */
+        char text[12][160];
+        const char *lines[12];
+        int n = 0;
+        snprintf(text[n], sizeof text[n], "VBlank waits: %u", (unsigned)now);
+        lines[n] = text[n]; n++;
+        snprintf(text[n], sizeof text[n], "last mark: %s",
+                 kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
+        lines[n] = text[n]; n++;
+
+        for (id = 1; id < 64 && n < 12; id++) {
+            ee_thread_status_t st;
+            if (ReferThreadStatus(id, &st) < 0 || !st.status)
+                continue;
+            snprintf(text[n], sizeof text[n],
+                     "t%02d p%02d %-7s wait %d/%d at %p iop %p",
+                     id, st.current_priority, status_name(st.status),
+                     st.waitType, st.waitId, st.func, kh_io_site[id]);
+            lines[n] = text[n];
+            n++;
+        }
+        ps2_gs_crash_screen("KH Days PS2 - main loop stalled", lines, n);
+        return;
     }
+
     for (id = 1; id < 64; id++) {
         ee_thread_status_t st;
         if (ReferThreadStatus(id, &st) < 0 || !st.status)
             continue;
         snprintf(line, sizeof line, "  thread %2d prio %3d %-7s wait %d/%d at %p  iop %p\n", id,
                  st.current_priority, status_name(st.status), st.waitType, st.waitId, st.func, kh_io_site[id]);
-        if (screen)
-            scr_printf("%s", line);
-        else
-            ps2_log_ring(line);
-    }
-    if (screen) {
-        scr_printf("\n  recent log:\n");
-        ps2_log_print_recent(14);
+        ps2_log_ring(line);
     }
 }
 
@@ -80,6 +97,12 @@ static void watchdog_thread(void *arg)
 {
     uint32_t last = 0, stalled = 0;
     (void)arg;
+    {
+        extern void *volatile kh_io_site[64];
+        int tid = GetThreadId();
+        if (tid > 0 && tid < 64)
+            kh_io_site[tid] = 0;    /* thread IDs can be reused; discard a stale previous owner */
+    }
     for (;;) {
         uint32_t now;
         WaitSema(g_sema);
@@ -93,9 +116,11 @@ static void watchdog_thread(void *arg)
         if (now == 0)
             continue;               /* still in boot loading: the loop has not run yet */
         if (stalled == 1)
-            report(now, 0);         /* 2 s: into the ring (shown on screen and in the panic report) */
-        else if (stalled == 2)
-            report(now, 1);         /* 4 s: on screen */
+            report(now, 0);         /* 2 s: ring only; transient loads must not disturb the GS */
+        else if (stalled == 5)
+            report(now, 1);         /* 10 s: GS-safe visible report for a sustained stall */
+        else if (stalled > 5 && (stalled % 5) == 0)
+            report(now, 0);         /* every 10 s thereafter: keep the in-RAM evidence current */
     }
 }
 
