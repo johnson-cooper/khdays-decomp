@@ -378,6 +378,12 @@ R19_U64_UNALIGNED = {
             "    if ((kh_read_u64_le_unaligned((u8 *)state[3] + 0x464) & 0x8000) != 0) {",
         ),
     ],
+    "src/overlays/enemies/ov172_enemy_grey_caprice_2/Ov172_CarryReleaseTick.c": [
+        (
+            "    if ((*(u64 *)((char *)state[3] + 0x464) & 0x8000) != 0) {",
+            "    if ((kh_read_u64_le_unaligned((u8 *)state[3] + 0x464) & 0x8000) != 0) {",
+        ),
+    ],
 }
 
 R19_HITS = []
