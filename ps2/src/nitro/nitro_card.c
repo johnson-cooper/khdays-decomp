@@ -215,6 +215,7 @@ int CARDi_RequestStreamCommand(u32 src, u32 dst, u32 len, CARDCallback cb, void 
     }
     if (cb)
         cb(arg);
+    kh_watchdog_mark = "card request complete";
     return g_result == CARD_RESULT_SUCCESS;
 }
 
