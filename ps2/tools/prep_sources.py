@@ -68,8 +68,9 @@ the original.  Every rule is mechanical and listed here:
       accessed through kh_unaligned.h.  R5900 ld/sd require 8-byte alignment; the DS layout
       and -fpack-struct=4 ABI stay untouched.  After all preparation rules, every PS2-bound
       source is also audited for direct 64-bit pointer dereferences whose address expression
-      contains a literal non-8-byte offset; preparation fails rather than emitting a new
-      hardware-only AdEL/AdES candidate.
+      has a statically provable non-8-byte effective displacement; typed pointer arithmetic is
+      scaled by its pointee size instead of being mistaken for raw byte arithmetic. Preparation
+      fails rather than emitting a new hardware-only AdEL/AdES candidate.
   R15 literal ITCM addresses of data embedded in ITCM code (0x01ff8000-0x01ffffff is the top of
       EE RAM, the main thread's stack) become the PS2 definitions of that data, listed in
       ITCM_DATA (ps2/src/nitro/nitro_itcm_data.c), e.g. G3D's texture-matrix builder tables.
@@ -433,6 +434,51 @@ def _r19_matching_paren(text, pos):
     return -1
 
 
+R19_POINTEE_SIZES = {
+    "char": 1, "signed char": 1, "unsigned char": 1, "u8": 1, "s8": 1,
+    "short": 2, "signed short": 2, "unsigned short": 2, "u16": 2, "s16": 2,
+    "int": 4, "signed int": 4, "unsigned int": 4, "u32": 4, "s32": 4,
+    "long": 4, "signed long": 4, "unsigned long": 4,
+    "long long": 8, "signed long long": 8, "unsigned long long": 8,
+    "u64": 8, "s64": 8, "uint64_t": 8, "int64_t": 8,
+}
+R19_PTR_CAST = re.compile(
+    r"\(\s*(?:(?:const|volatile)\s+)*"
+    r"(unsigned\s+long\s+long|signed\s+long\s+long|long\s+long|"
+    r"unsigned\s+long|signed\s+long|long|unsigned\s+int|signed\s+int|int|"
+    r"unsigned\s+short|signed\s+short|short|unsigned\s+char|signed\s+char|char|"
+    r"uint64_t|int64_t|u64|s64|u32|s32|u16|s16|u8|s8)\s*\*\s*\)"
+)
+
+
+def _r19_pointer_scale(expr, op_pos, code):
+    """Return byte scale for pointer arithmetic when the pointee type is provable."""
+    prefix = expr[:op_pos].rstrip()
+
+    # An explicit cast establishes the arithmetic type. For example, a char pointer
+    # plus 0x464 is a raw 0x464-byte displacement.
+    casts = list(R19_PTR_CAST.finditer(prefix))
+    if casts:
+        return R19_POINTEE_SIZES.get(" ".join(casts[-1].group(1).split()))
+
+    # Resolve common simple pointer variables such as int *state. If the pointee type
+    # is not obvious, do not guess here; the emitted ld/sd audit remains the backstop.
+    base = re.search(r"([A-Za-z_]\w*)\s*$", prefix)
+    if not base:
+        return None
+    name = re.escape(base.group(1))
+    decl = re.search(
+        r"\b(unsigned\s+long\s+long|signed\s+long\s+long|long\s+long|"
+        r"unsigned\s+long|signed\s+long|long|unsigned\s+int|signed\s+int|int|"
+        r"unsigned\s+short|signed\s+short|short|unsigned\s+char|signed\s+char|char|"
+        r"uint64_t|int64_t|u64|s64|u32|s32|u16|s16|u8|s8)\s*\*\s*" + name + r"\b",
+        code,
+    )
+    if not decl:
+        return None
+    return R19_POINTEE_SIZES.get(" ".join(decl.group(1).split()))
+
+
 def audit_r5900_u64_casts(text, relp):
     """Fail on statically provable non-8-byte direct u64/s64 pointer dereferences."""
     global R19_AUDIT_FILES
@@ -457,9 +503,15 @@ def audit_r5900_u64_casts(text, relp):
         if expr is None:
             continue
         for off in re.finditer(r"[+-]\s*(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b", expr):
-            value = int(off.group(1), 0)
+            scale = _r19_pointer_scale(expr, off.start(), code)
+            if scale is None:
+                continue
+            value = int(off.group(1), 0) * scale
             if value & 7:
-                bad.append((code.count("\n", 0, m.start()) + 1, off.group(0).strip()))
+                bad.append((
+                    code.count("\n", 0, m.start()) + 1,
+                    f"{off.group(0).strip()} => {value:#x} byte displacement",
+                ))
                 break
     if bad:
         where = ", ".join(f"line {line} ({off})" for line, off in bad[:8])
