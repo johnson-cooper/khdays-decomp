@@ -14,6 +14,7 @@
 #   3. ninja            - compile every archive (the ELF link needs step 4 first)
 #   4. gen_link.py      - .bss layouts, data aliases, overlay ids, stubs for missing SDK functions
 #   5. ps2build build   - link
+#   6. audit_r5900_ldsd.py - inspect emitted EE code for unsafe 64-bit accesses
 # Any failure stops the script with the tool's own error output.
 trap 'echo "An error occurred!"; read -p "Press Enter to close..." ' EXIT
 set -eu
@@ -30,12 +31,12 @@ done
 [ -n "$PY" ] || die "python 3.8+ not found (set PYTHON=...)"
 
 if [ "${1:-}" != "--quick" ]; then
-    echo "== [1/5] preparing sources"
+    echo "== [1/6] preparing sources"
     "$PY" ps2/tools/gen_hw_shadow.py || die "gen_hw_shadow.py failed"
     "$PY" ps2/tools/prep_sources.py || die "prep_sources.py failed"
-    echo "== [2/5] generating ps2.yaml"
+    echo "== [2/6] generating ps2.yaml"
     "$PY" ps2/tools/gen_ps2yaml.py || die "gen_ps2yaml.py failed"
-    echo "== [3/5] compiling archives"
+    echo "== [3/6] compiling archives"
     ps2build generate >/dev/null || die "ps2build generate failed"
     SDK=$(dirname "$(command -v ps2build)")
     NINJA="$SDK/tools/ninja"
@@ -66,9 +67,11 @@ if [ "${1:-}" != "--quick" ]; then
     for a in build/lib/libkh_*.a; do
         [ "$(wc -c < "$a")" -gt 8 ] || die "$a is empty (a failed archive step?); delete it and rebuild"
     done
-    echo "== [4/5] generating link glue"
+    echo "== [4/6] generating link glue"
     "$PY" ps2/tools/gen_link.py || die "gen_link.py failed"
 fi
-echo "== [5/5] ps2build build"
+echo "== [5/6] ps2build build"
 ps2build build || die "ps2build build failed (errors above)"
+echo "== [6/6] auditing R5900 64-bit loads/stores"
+"$PY" ps2/tools/audit_r5900_ldsd.py || die "R5900 ld/sd alignment audit failed"
 ls -l build/bin/*.elf
