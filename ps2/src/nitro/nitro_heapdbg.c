@@ -105,7 +105,7 @@ void __wrap_NNS_FndFreeToExpHeap(void *heap, void *mem)
                 __real_NNS_FndFreeToExpHeap(heap, mem);
                 g_prev = g_last; g_last.op = "free"; g_last.heap = heap; g_last.ptr = mem; g_last.size = want->size;
                 g_last.caller = __builtin_return_address(0);
-#if KH_PS2_DEBUG
+#if defined(KH_PS2_HEAP_CHECK) && KH_PS2_HEAP_CHECK
                 kh_prof_begin(KH_PROF_DEBUG);
                 kh_nns_heap_check("after a free");
                 kh_prof_end(KH_PROF_DEBUG);
@@ -118,7 +118,7 @@ void __wrap_NNS_FndFreeToExpHeap(void *heap, void *mem)
            __builtin_return_address(0));
 }
 
-/* ---- consistency checking (bring-up, KH_PS2_DEBUG builds) -------------------------------
+/* ---- consistency checking (opt-in KH_PS2_HEAP_CHECK builds) ----------------------------
  * After every allocation and free (both wrapped) and once per VBlank, walk both lists of the two
  * game heaps: signatures, back links, and that the head walk ends at the recorded tail.  The
  * first failure is reported with the operation that preceded it; checking then stops. */
@@ -212,7 +212,7 @@ void *__wrap_NNS_FndAllocFromExpHeapEx(void *heap, u32 size, int align)
     if (!p && heap)
         KH_WARN("heap", "allocation of %u bytes from %p failed (from %p)", (unsigned)size, heap,
                 __builtin_return_address(0));
-#if KH_PS2_DEBUG
+#if defined(KH_PS2_HEAP_CHECK) && KH_PS2_HEAP_CHECK
     kh_prof_begin(KH_PROF_DEBUG);
     kh_nns_heap_check("after an allocation");
     kh_prof_end(KH_PROF_DEBUG);
