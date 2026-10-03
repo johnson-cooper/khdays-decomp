@@ -128,10 +128,12 @@ static void vblank_service(void)
     kh_prof_end(KH_PROF_VBTASK);
 #if KH_PS2_DEBUG
     kh_prof_begin(KH_PROF_DEBUG);
+#if defined(KH_PS2_HEAP_CHECK) && KH_PS2_HEAP_CHECK
     {
         extern void kh_nns_heap_check(const char *when);
         kh_nns_heap_check("between operations (found at a VBlank)");
     }
+#endif
     if (g_ds_vblank_count % 300 == 0) {
         extern void kh_debug_log_object_states(void);
         kh_debug_log_object_states();
