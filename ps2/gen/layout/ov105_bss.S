@@ -30,8 +30,103 @@ data_ov105_020bfa94:
     .weak data_ov105_020bfac0
     .type data_ov105_020bfac0, @object
 data_ov105_020bfac0:
-    .space 0xa00
-    .space 0x60
+    .space 0x9c4
+    .globl sWh_bPictoCatch
+    .type sWh_bPictoCatch, @object
+sWh_bPictoCatch:
+    .space 0x4
+    .globl sWh_nRecvBufferSize
+    .type sWh_nRecvBufferSize, @object
+sWh_nRecvBufferSize:
+    .space 0x4
+    .globl sWh_pParentWEPKeyGenerator
+    .type sWh_pParentWEPKeyGenerator, @object
+sWh_pParentWEPKeyGenerator:
+    .space 0x4
+    .globl sWh_nConnectMode
+    .type sWh_nConnectMode, @object
+sWh_nConnectMode:
+    .space 0x4
+    .globl sWh_nRand
+    .type sWh_nRand, @object
+sWh_nRand:
+    .space 0x4
+    .globl sWh_pScanCallback
+    .type sWh_pScanCallback, @object
+sWh_pScanCallback:
+    .space 0x4
+    .globl sWh_pChildWEPKeyGenerator
+    .type sWh_pChildWEPKeyGenerator, @object
+sWh_pChildWEPKeyGenerator:
+    .space 0x4
+    .globl sWh_pJudgeAccept
+    .type sWh_pJudgeAccept, @object
+sWh_pJudgeAccept:
+    .space 0x4
+    .globl sWh_nErrCode
+    .type sWh_nErrCode, @object
+sWh_nErrCode:
+    .space 0x4
+    .globl sWh_nSendBufferSize
+    .type sWh_nSendBufferSize, @object
+sWh_nSendBufferSize:
+    .space 0x4
+    .globl sWh_pRecvBuffer
+    .type sWh_pRecvBuffer, @object
+sWh_pRecvBuffer:
+    .space 0x4
+    .globl sWh_pSendBuffer
+    .type sWh_pSendBuffer, @object
+sWh_pSendBuffer:
+    .space 0x4
+    .globl sWh_pReceiver
+    .type sWh_pReceiver, @object
+sWh_pReceiver:
+    .space 0x4
+    .globl sWh_nSysState
+    .type sWh_nSysState, @object
+sWh_nSysState:
+    .space 0x4
+    .globl sWh_pField3c
+    .type sWh_pField3c, @object
+sWh_pField3c:
+    .space 0x4
+    .globl data_ov105_020c04c0
+    .type data_ov105_020c04c0, @object
+data_ov105_020c04c0:
+    .space 0x2
+    .globl sWh_bAutoConnect
+    .type sWh_bAutoConnect, @object
+sWh_bAutoConnect:
+    .space 0x2
+    .globl sWh_nChannelBitmap
+    .type sWh_nChannelBitmap, @object
+sWh_nChannelBitmap:
+    .space 0x2
+    .globl sWh_nMeasuredChannel
+    .type sWh_nMeasuredChannel, @object
+sWh_nMeasuredChannel:
+    .space 0x2
+    .globl sWh_nMpFreq
+    .type sWh_nMpFreq, @object
+sWh_nMpFreq:
+    .space 0x2
+    .globl sWh_nField0e
+    .type sWh_nField0e, @object
+sWh_nField0e:
+    .space 0x2
+    .globl sWh_nDisconnectReason
+    .type sWh_nDisconnectReason, @object
+sWh_nDisconnectReason:
+    .space 0x2
+    .globl sWh_nChannelBusyRatio
+    .type sWh_nChannelBusyRatio, @object
+sWh_nChannelBusyRatio:
+    .space 0x2
+    .globl sWh_pWmBuffer
+    .type sWh_pWmBuffer, @object
+sWh_pWmBuffer:
+    .space 0x50
     .weak data_ov105_020c0520
     .type data_ov105_020c0520, @object
 data_ov105_020c0520:

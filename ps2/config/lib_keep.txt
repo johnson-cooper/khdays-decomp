@@ -4,3 +4,6 @@
 # FX_GetSqrtResult (ps2/src/nitro/nitro_cp.c).  Reviewed one by one.
 libs/nitro/mtx/calls/MTX_OrthoW.c
 libs/nitro/mtx/calls/Camera_BuildProjectionMtx.c
+# 0x07000000 here is the DISPCNT BG-mode mask in an inlined register helper, not an OAM address
+# (prep leaves it alone, build/ps2/hw_ambiguous.txt); the function itself only calls LoadBGnChar.
+libs/nns/g2d/calls/LoadBGCharacter.c

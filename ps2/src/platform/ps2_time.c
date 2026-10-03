@@ -21,6 +21,10 @@ static int vblank_handler(int cause)
     (void)cause;
     g_vblank_count++;
     iSignalSema(g_vblank_sema);
+    {
+        extern void kh_watchdog_vblank(uint32_t vblank);
+        kh_watchdog_vblank(g_vblank_count);
+    }
     ExitHandler();
     return 0;
 }
@@ -60,7 +64,16 @@ void kh_time_sleep_us(uint32_t us)
         ;
 }
 
+static void vblank_wait(void);
+
 void kh_vblank_wait(void)
+{
+    int w = kh_io_begin();
+    vblank_wait();
+    kh_io_end(w);
+}
+
+static void vblank_wait(void)
 {
     if (g_vblank_sema < 0) {
         /* Before the handler exists (very early boot) poll the GS CSR VSINT bit. */
@@ -71,8 +84,13 @@ void kh_vblank_wait(void)
         g_vblank_count++;
         return;
     }
-    /* Drop a stale signal so we wait for the *next* VBlank, not one that already passed. */
-    PollSema(g_vblank_sema);
+    /* Drop every stale signal so we wait for the *next* VBlank, not one that already passed.  The
+     * EE kernel does not clamp a semaphore to max_count: while a frame takes several VBlanks the
+     * count keeps growing, and a single PollSema left WaitSema returning at once - the game thread
+     * then never blocked and starved the lower-priority DS threads (the file loader: field loads
+     * queued forever and the player could never act). */
+    while (PollSema(g_vblank_sema) >= 0)
+        ;
     WaitSema(g_vblank_sema);
 }
 

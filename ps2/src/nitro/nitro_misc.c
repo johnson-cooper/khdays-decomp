@@ -33,9 +33,6 @@ void OS_FreeToHeap(int arena, int heap, void *p)
 
 void OSi_FreeStackAlloc(void *p) { kh_free(p); }
 
-/* The SDK's VBlank IRQ handler (wakes threads waiting for VBlank): OS_WaitVBlankIntr does that. */
-void OSi_VBlankInterruptHandler(void) { }
-
 /* OS tick timer reload (timer 0): ticks come from the EE timer instead. */
 void SetupTimer0Reload(u64 tick) { (void)tick; }
 

@@ -1,0 +1,21 @@
+/* PS2: mechanically prepared copy of src/overlays/scenes/ov008_camp_menu/data/ov008_class_02090d1c.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "game/class_descriptor.h"
+/* ov008 class descriptor data_ov008_02090d1c, 0x02090d1c-0x02090d30 (.data).
+ *
+ * InstantiateClass (02023930 / 02023960) builds a task object from it: the
+ * u16 class / group ids, the constructor whose return is the first state
+ * function, the method slot, the size of the zero-filled auxiliary block and
+ * the arena reference.  This one is the mission result screen (constructor 020802bc, 0x97f8-byte state).
+ */
+
+extern void Ov008_MissionSceneCtor(void);
+extern void Ov008_MissionDestroyContext(void);
+
+GameClassDescriptor data_ov008_02090d1c __attribute__((aligned(__alignof__(GameClassDescriptor)))) = {
+    8,  /* nClassId */
+    14,  /* nGroupId */
+    Ov008_MissionSceneCtor,  /* pfnCtor */
+    Ov008_MissionDestroyContext,  /* pfnMethod */
+    38904,  /* nAuxSize */
+    0,  /* pArena */
+};

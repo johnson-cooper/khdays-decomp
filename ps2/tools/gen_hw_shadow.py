@@ -40,6 +40,8 @@ GEOMETRY = (0x04000400, 0x04000700)
 COMPUTING = {0x04000280: "kh_cp_divcnt_ptr", 0x040002b0: "kh_cp_sqrtcnt_ptr"}
 LVALUE = re.compile(r"^\s*#\s*define\s+(\w+)\s+\(\s*\*\s*\(\s*([\w ]+?)\s*\*\s*\)\s*\(?\s*(0x[0-9a-fA-F]+)[uUlL]*\s*\)?\s*\)\s*$", re.M)
 CONST = re.compile(r"^\s*#\s*define\s+(\w+)\s+\(?\s*(0x[0-9a-fA-F]+)[uUlL]*\s*\)?\s*$", re.M)
+# address constants with a pointer cast: `#define HW_BG_PLTT ((void *)0x05000000)`
+CAST = re.compile(r"^\s*#\s*define\s+(\w+)\s+\(\s*\(\s*([\w ]+?\*)\s*\)\s*(0x[0-9a-fA-F]+)[uUlL]*\s*\)\s*$", re.M)
 
 
 def region(v):
@@ -91,6 +93,14 @@ def main():
             continue
         lines.append(f"#undef {name}")
         lines.append(f"#define {name} ((unsigned int){r[0]} + 0x{r[1]:x})   /* 0x{v:08x} */")
+        n += 1
+    for m in CAST.finditer(text):
+        name, typ, v = m.group(1), m.group(2), int(m.group(3), 16)
+        r = region(v)
+        if name in seen or not r:
+            continue
+        lines.append(f"#undef {name}")
+        lines.append(f"#define {name} (({typ})((unsigned int){r[0]} + 0x{r[1]:x}))   /* 0x{v:08x} */")
         n += 1
     lines += ["", "#endif", ""]
     os.makedirs(os.path.join(ROOT, "ps2", "include", "nitro"), exist_ok=True)

@@ -24,11 +24,93 @@ static void copy_fwd8(const void *src, void *dst, u32 size)
         *d++ = *s++;          /* overlapping forward copy replicates, like the ARM loop */
 }
 
-void MI_CpuFill8(void *dst, u8 data, u32 size) { memset(dst, data, size); }
-void MI_CpuClear8(void *dst, u32 size) { memset(dst, 0, size); }
-void MI_CpuCopy8(const void *src, void *dst, u32 size) { copy_fwd8(src, dst, size); }
+/* DS VRAM.  Game code reaches the banks through the LCDC window (0x06800000.., rewritten to
+ * kh_ds_vram) as well as through BG/OBJ pointers.  On the DS a CPU write only lands in a bank that
+ * is mapped where the CPU can see it (LCDC, BG, OBJ): scene setups clear the whole LCDC window
+ * (MIi_CpuClearFast(0, 0x06800000, 0xa4000)) while textures stay in banks mapped as texture
+ * memory, and those keep their contents.  Bulk fills and copies into kh_ds_vram therefore go bank
+ * by bank and skip banks the CPU could not write.  (Writing them all wiped the cutscene textures:
+ * the models then drew black.) */
+extern int kh_nitro_vram_bank_at(uint32_t ofs, uint32_t *end);
+extern int kh_nitro_bank_cpu_visible(int b);
 
+static inline int in_vram(const void *p)
+{
+    return (const u8 *)p >= kh_ds_vram && (const u8 *)p < kh_ds_vram + 0xa4000;
+}
+
+/* Length of the piece of [d, d + size) inside one bank, and whether the CPU may write it. */
+static u32 vram_piece(const u8 *d, u32 size, int *writable)
+{
+    uint32_t ofs = (uint32_t)(d - kh_ds_vram), end;
+    int b = kh_nitro_vram_bank_at(ofs, &end);
+    *writable = kh_nitro_bank_cpu_visible(b);
+    return end - ofs < size ? end - ofs : size;
+}
+
+#define VRAM_FILL(dst, size, FILL)                                                   \
+    do {                                                                             \
+        u8 *d_ = (u8 *)(dst);                                                        \
+        u32 left_ = (size);                                                          \
+        while (left_) {                                                              \
+            int ok_;                                                                 \
+            u32 n_ = vram_piece(d_, left_, &ok_);                                    \
+            if (ok_) {                                                               \
+                FILL(d_, n_);                                                        \
+                kh_vram_mark((u32)(d_ - kh_ds_vram), n_);                            \
+            }                                                                        \
+            d_ += n_;                                                                \
+            left_ -= n_;                                                             \
+        }                                                                            \
+    } while (0)
+
+#define VRAM_COPY(src, dst, size, COPY)                                              \
+    do {                                                                             \
+        const u8 *s_ = (const u8 *)(src);                                            \
+        u8 *d_ = (u8 *)(dst);                                                        \
+        u32 left_ = (size);                                                          \
+        while (left_) {                                                              \
+            int ok_;                                                                 \
+            u32 n_ = vram_piece(d_, left_, &ok_);                                    \
+            if (ok_) {                                                               \
+                COPY(s_, d_, n_);                                                    \
+                kh_vram_mark((u32)(d_ - kh_ds_vram), n_);                            \
+            }                                                                        \
+            s_ += n_;                                                                \
+            d_ += n_;                                                                \
+            left_ -= n_;                                                             \
+        }                                                                            \
+    } while (0)
+
+static void fill8_raw(void *dst, u8 data, u32 size) { memset(dst, data, size); }
+#define FILL8(d, n) fill8_raw(d, data, n)
+#define CLEAR8(d, n) fill8_raw(d, 0, n)
+
+void MI_CpuFill8(void *dst, u8 data, u32 size)
+{
+    if (in_vram(dst)) { VRAM_FILL(dst, size, FILL8); return; }
+    memset(dst, data, size);
+}
+void MI_CpuClear8(void *dst, u32 size)
+{
+    if (in_vram(dst)) { VRAM_FILL(dst, size, CLEAR8); return; }
+    memset(dst, 0, size);
+}
+void MI_CpuCopy8(const void *src, void *dst, u32 size)
+{
+    if (in_vram(dst)) { VRAM_COPY(src, dst, size, copy_fwd8); return; }
+    copy_fwd8(src, dst, size);
+}
+
+static void clear16_raw(u16 data, void *dst, u32 size);
+#define FILL16(d, n) clear16_raw(data, d, n)
 void MIi_CpuClear16(u16 data, void *dst, u32 size)
+{
+    if (in_vram(dst)) { VRAM_FILL(dst, size, FILL16); return; }
+    clear16_raw(data, dst, size);
+}
+
+static void clear16_raw(u16 data, void *dst, u32 size)
 {
     u16 *d = dst;
     u32 n = size / 2;
@@ -36,7 +118,14 @@ void MIi_CpuClear16(u16 data, void *dst, u32 size)
         *d++ = data;
 }
 
+static void copy16_raw(const void *src, void *dst, u32 size);
 void MIi_CpuCopy16(const void *src, void *dst, u32 size)
+{
+    if (in_vram(dst)) { VRAM_COPY(src, dst, size, copy16_raw); return; }
+    copy16_raw(src, dst, size);
+}
+
+static void copy16_raw(const void *src, void *dst, u32 size)
 {
     const u16 *s = src;
     u16 *d = dst;
@@ -49,7 +138,15 @@ void MIi_CpuCopy16(const void *src, void *dst, u32 size)
         *d++ = *s++;
 }
 
+static void clear32_raw(u32 data, void *dst, u32 size);
+#define FILL32(d, n) clear32_raw(data, d, n)
 void MIi_CpuClear32(u32 data, void *dst, u32 size)
+{
+    if (in_vram(dst)) { VRAM_FILL(dst, size, FILL32); return; }
+    clear32_raw(data, dst, size);
+}
+
+static void clear32_raw(u32 data, void *dst, u32 size)
 {
     u32 *d = dst;
     u32 n = size / 4;
@@ -57,7 +154,14 @@ void MIi_CpuClear32(u32 data, void *dst, u32 size)
         *d++ = data;
 }
 
+static void copy32_raw(const void *src, void *dst, u32 size);
 void MIi_CpuCopy32(const void *src, void *dst, u32 size)
+{
+    if (in_vram(dst)) { VRAM_COPY(src, dst, size, copy32_raw); return; }
+    copy32_raw(src, dst, size);
+}
+
+static void copy32_raw(const void *src, void *dst, u32 size)
 {
     const u32 *s = src;
     u32 *d = dst;

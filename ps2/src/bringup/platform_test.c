@@ -8,6 +8,22 @@
 #include "platform/kh_platform.h"
 
 #include <stdio.h>
+#include <math.h>
+
+/* audio check: a 440 Hz tone (Select toggles it) */
+static int g_tone = 1;
+static void tone(int16_t *out, int frames)
+{
+    static float ph;
+    int i;
+    for (i = 0; i < frames; i++) {
+        int16_t v = g_tone ? (int16_t)(8000.0f * sinf(ph)) : 0;
+        ph += 2.0f * 3.14159265f * 440.0f / 48000.0f;
+        if (ph > 6.2831853f) ph -= 6.2831853f;
+        out[i * 2] = out[i * 2 + 1] = v;
+    }
+}
+extern volatile unsigned int kh_audio_chunks;
 
 int main(int argc, char **argv)
 {
@@ -16,6 +32,7 @@ int main(int argc, char **argv)
 
     kh_platform_init(argc, argv);
     have_pak = kh_file_exists("ps2data/khdays.pak");
+    kh_audio_start(tone);
     KH_INFO("test", "ps2data/khdays.pak %s", have_pak ? "found" : "NOT found");
 
     for (;;) {
@@ -35,6 +52,11 @@ int main(int argc, char **argv)
         kh_video_debug_text(16, y, 0xc0c0c0, "fps %.1f  vblank %u  %dHz", ps->fps, (unsigned)kh_vblank_count(), kh_video_refresh_hz()); y += 10;
         kh_video_debug_text(16, y, 0xc0c0c0, "EE elf %uK heap used %uK free %uK", ms.ee_elf / 1024, ms.heap_used / 1024, ms.heap_free / 1024); y += 10;
         kh_video_debug_text(16, y, 0xc0c0c0, "GS VRAM %uK / %uK", ms.gs_vram_used / 1024, ms.gs_vram_total / 1024); y += 10;
+        kh_video_debug_text(16, y, 0xc0c0c0, "audio chunks %u (Select: tone)", kh_audio_chunks); y += 10;
+        if (frame % 120 == 0)
+            KH_INFO("test", "audio chunks %u", kh_audio_chunks);
+        if (pad->pressed & KH_BTN_SELECT)
+            g_tone ^= 1;
         kh_video_debug_text(16, y, pad->connected ? 0xffff80 : 0xff8080, "pad0 %s held %04x L(%d,%d) R(%d,%d)",
                             pad->connected ? "ok" : "--", (unsigned)pad->held, pad->lx, pad->ly, pad->rx, pad->ry); y += 10;
         kh_video_end_frame();

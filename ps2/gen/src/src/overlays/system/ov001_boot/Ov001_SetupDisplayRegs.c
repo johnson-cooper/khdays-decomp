@@ -40,10 +40,10 @@ void Ov001_SetupDisplayRegs(void) {
     *reg_disp3dcnt = (unsigned short)(*reg_disp3dcnt & ~0x3002);
     *reg_disp3dcnt = (unsigned short)((*reg_disp3dcnt & ~0x3000) | 0x10);
     *reg_bldcnt = 0;
-    *reg_swap_buffers = 2;
+    kh_ge_port_write1(0x540, (unsigned int)(2));
     *reg_disp3dcnt = (unsigned short)(*reg_disp3dcnt & 0xcffb);
     *reg_disp3dcnt = (unsigned short)((*reg_disp3dcnt & ~0x3000) | 8);
-    *reg_viewport = 0xbfff0000;
+    kh_ge_port_write1(0x580, (unsigned int)(0xbfff0000));
 
     Ov001_SetupSubScreenBanks();
     DispCnt_ApplyPendingMode();

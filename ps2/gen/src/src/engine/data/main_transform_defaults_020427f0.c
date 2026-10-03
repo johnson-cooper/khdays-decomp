@@ -11,15 +11,15 @@ typedef struct { fx32 _00, _01, _02, _10, _11, _12, _20, _21, _22, _30, _31, _32
 #define FX32_ONE 0x1000
 
 /* Set at boot; 0201f634, 02025138, 0202a3cc and ov022 020b1264 test it. */
-int data_020427f0 = 1;
+int data_020427f0 __attribute__((aligned(__alignof__(int)))) = 1;
 /* Read by 020280a4 / 02028314. */
-int data_020427f4 = 0x2a;
-int data_020427f8[2] = { 0, 0x2a };
+int data_020427f4 __attribute__((aligned(__alignof__(int)))) = 0x2a;
+int data_020427f8[2] __attribute__((aligned(__alignof__(int)))) = { 0, 0x2a };
 #pragma explicit_zero_data on
-int data_02042800;
+int data_02042800 __attribute__((aligned(__alignof__(int)))) = 0;
 #pragma explicit_zero_data off
 /* Sixteen words, only [10] and [15] set (0x10000), read by 02028314. */
-int data_02042804[16] = {
+int data_02042804[16] __attribute__((aligned(__alignof__(int)))) = {
     0, 0, 0, 0,
     0, 0, 0, 0,
     0, 0, 0x10000, 0,
@@ -27,20 +27,20 @@ int data_02042804[16] = {
 };
 
 /* Default record read by 02027b18: four byte parameters, two ids, a 3x3 identity and two zero vectors. */
-unsigned char data_02042844[4] = { 0x12, 0x10, 0x17, 0x1b };
-int data_02042848[2] = { 1, 2 };
-MtxFx33 data_02042850 = { FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0, FX32_ONE };
+unsigned char data_02042844[4] __attribute__((aligned(__alignof__(unsigned char)))) = { 0x12, 0x10, 0x17, 0x1b };
+int data_02042848[2] __attribute__((aligned(__alignof__(int)))) = { 1, 2 };
+MtxFx33 data_02042850 __attribute__((aligned(__alignof__(MtxFx33)))) = { FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0, FX32_ONE };
 #pragma explicit_zero_data on
-VecFx32 data_02042874 = { 0, 0, 0 };
-VecFx32 data_02042880 = { 0, 0, 0 };
+VecFx32 data_02042874 __attribute__((aligned(__alignof__(VecFx32)))) = { 0, 0, 0 };
+VecFx32 data_02042880 __attribute__((aligned(__alignof__(VecFx32)))) = { 0, 0, 0 };
 #pragma explicit_zero_data off
 
 /* The same default record for 02027d7c, followed by a zero 3x2 block and a 4x3 identity for 020287e8. */
-unsigned char data_0204288c[4] = { 0x12, 0x10, 0x17, 0x1b };
-int data_02042890[2] = { 1, 2 };
-MtxFx33 data_02042898 = { FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0, FX32_ONE };
+unsigned char data_0204288c[4] __attribute__((aligned(__alignof__(unsigned char)))) = { 0x12, 0x10, 0x17, 0x1b };
+int data_02042890[2] __attribute__((aligned(__alignof__(int)))) = { 1, 2 };
+MtxFx33 data_02042898 __attribute__((aligned(__alignof__(MtxFx33)))) = { FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0, FX32_ONE };
 #pragma explicit_zero_data on
-VecFx32 data_020428bc = { 0, 0, 0 };
-VecFx32 data_020428c8[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
+VecFx32 data_020428bc __attribute__((aligned(__alignof__(VecFx32)))) = { 0, 0, 0 };
+VecFx32 data_020428c8[2] __attribute__((aligned(__alignof__(VecFx32)))) = { { 0, 0, 0 }, { 0, 0, 0 } };
 #pragma explicit_zero_data off
-MtxFx43 data_020428e0 = { FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0 };
+MtxFx43 data_020428e0 __attribute__((aligned(__alignof__(MtxFx43)))) = { FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0, FX32_ONE, 0, 0, 0 };

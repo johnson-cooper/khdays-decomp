@@ -8,22 +8,22 @@
 #define OVERLAY_COUNT 303
 
 /* "%s/%s/lv.b.z": the level file path template (LevelTable_ReadEntry formats it). */
-char gLvPathFmt[16] = "%s/%s/lv.b.z";
+char gLvPathFmt[16] __attribute__((aligned(__alignof__(char)))) = "%s/%s/lv.b.z";
 
 /* "ba/ch": the base directory of the level files. */
-char gBaChPath[8] = "ba/ch";
+char gBaChPath[8] __attribute__((aligned(__alignof__(char)))) = "ba/ch";
 
 /* The next spawn id handed out by CreateRegistryEntry (child objects start at 0x01000000). */
-u32 data_02042ad8 = 0x00000001;
+u32 data_02042ad8 __attribute__((aligned(__alignof__(u32)))) = 0x00000001;
 
 /* Twenty unreferenced bytes between the counter and the table (one more SHA-1 sized digest). */
-u8 data_02042adc[FS_OVERLAY_DIGEST_SIZE] = {
+u8 data_02042adc[FS_OVERLAY_DIGEST_SIZE] __attribute__((aligned(__alignof__(u8)))) = {
     0xa5, 0xc0, 0x80, 0x0d, 0x26, 0xf8, 0x76, 0xf4, 0xfe, 0xf3, 0x5d, 0xfd, 0x87, 0x8e, 0xae, 0x51, 0xf3, 0x00, 0x05, 0x57,
 };
 
 /* SDK_OVERLAY_DIGEST: makerom's HMAC-SHA1 of every overlay image (fsi_digest_key), indexed by overlay id;
  * FS_StartOverlay compares the freshly loaded image against its row. */
-u8 data_02042af0[OVERLAY_COUNT][FS_OVERLAY_DIGEST_SIZE] = {
+u8 data_02042af0[OVERLAY_COUNT][FS_OVERLAY_DIGEST_SIZE] __attribute__((aligned(__alignof__(u8)))) = {
     /* ov000 */ { 0x79, 0x56, 0x27, 0x80, 0xcd, 0x0e, 0x14, 0x8e, 0xda, 0xca, 0xe6, 0x96, 0x47, 0x7a, 0xca, 0xac, 0xb9, 0x4e, 0x02, 0x5e },
     /* ov001 */ { 0xaa, 0x18, 0xa2, 0x08, 0x83, 0x00, 0x8b, 0x3c, 0xb0, 0x74, 0x0b, 0x43, 0x61, 0x6e, 0xa8, 0xf3, 0x9e, 0x23, 0xfb, 0x6e },
     /* ov002 */ { 0x33, 0x6e, 0x4f, 0x39, 0xa8, 0xb0, 0x05, 0x88, 0x2d, 0x7e, 0x15, 0xbd, 0x4b, 0x48, 0xf6, 0x02, 0x15, 0x78, 0xcd, 0x49 },
@@ -331,5 +331,5 @@ u8 data_02042af0[OVERLAY_COUNT][FS_OVERLAY_DIGEST_SIZE] = {
 
 /* SDK_OVERLAY_DIGEST_END: the zero word closing the table. */
 #pragma explicit_zero_data on
-u32 data_0204429c;
+u32 data_0204429c __attribute__((aligned(__alignof__(u32)))) = 0;
 #pragma explicit_zero_data off

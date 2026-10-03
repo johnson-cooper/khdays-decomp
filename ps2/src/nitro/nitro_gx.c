@@ -25,6 +25,11 @@ enum {
     VIEW_BGEXT, VIEW_OBJEXT, VIEW_SUB_BGEXT, VIEW_SUB_OBJEXT, VIEW_LCDC, NVIEWS
 };
 static u32 g_view_banks[NVIEWS];   /* GX_VRAM_* bank masks */
+/* where each bank sits inside the view, fixed when the view is set: taking a bank away (to LCDC,
+ * to another engine) leaves the others where they are, as on the DS - texture slot 3 stays slot 3
+ * when slot 2's bank is reassigned.  (Recomputing a packed layout shifted every texture.) */
+static u32 g_view_ofs[NVIEWS][NBANKS];
+uint32_t kh_vram_page_gen[KH_VRAM_PAGES];
 
 /* ------------------------------------------------------------------ banks */
 
@@ -34,11 +39,9 @@ uint32_t kh_nitro_view_to_vram(int view, uint32_t ofs)
     u32 banks = g_view_banks[view];
     int b;
     for (b = 0; b < NBANKS; b++) {
-        if (!(banks & (1u << b)))
-            continue;
-        if (ofs < k_bank_size[b])
-            return kh_ds_vram_bank_ofs[b] + ofs;
-        ofs -= k_bank_size[b];
+        u32 base = g_view_ofs[view][b];
+        if ((banks & (1u << b)) && ofs >= base && ofs - base < k_bank_size[b])
+            return kh_ds_vram_bank_ofs[b] + (ofs - base);
     }
     return 0xffffffffu;
 }
@@ -50,6 +53,28 @@ u8 *kh_nitro_view_ptr(int view, uint32_t ofs)
 }
 
 uint32_t kh_nitro_view_banks(int view) { return g_view_banks[view]; }
+
+/* The bank holding kh_ds_vram byte `ofs` (-1: none) and where that bank ends. */
+int kh_nitro_vram_bank_at(uint32_t ofs, uint32_t *end)
+{
+    int b;
+    for (b = 0; b < NBANKS; b++)
+        if (ofs >= kh_ds_vram_bank_ofs[b] && ofs < kh_ds_vram_bank_ofs[b] + k_bank_size[b]) {
+            *end = kh_ds_vram_bank_ofs[b] + k_bank_size[b];
+            return b;
+        }
+    *end = ofs + 1;
+    return -1;
+}
+
+/* Whether the CPU can write bank b: mapped to LCDC or to a 2D engine's BG/OBJ memory.  Banks used
+ * as texture / texture-palette / extended-palette memory are not in the CPU's address space. */
+int kh_nitro_bank_cpu_visible(int b)
+{
+    u32 m = g_view_banks[VIEW_LCDC] | g_view_banks[VIEW_BG] | g_view_banks[VIEW_OBJ] |
+            g_view_banks[VIEW_SUB_BG] | g_view_banks[VIEW_SUB_OBJ];
+    return b >= 0 && ((m >> b) & 1);
+}
 
 /* window 0..3 = BG-A, BG-B, OBJ-A, OBJ-B (the 0x06000000.. CPU windows) */
 uint32_t kh_nitro_vram_window_ofs(int window)
@@ -66,18 +91,58 @@ static void unmap_banks(u32 banks)
         g_view_banks[v] &= ~banks;
 }
 
+/* A texture / texture-palette view changing its banks changes what every cached 3D texture reads */
+static void view_changed(u32 before_tex, u32 before_pltt)
+{
+    extern void kh_tex3d_invalidate(void);
+    if (g_view_banks[VIEW_TEX] != before_tex || g_view_banks[VIEW_TEXPLTT] != before_pltt)
+        kh_tex3d_invalidate();
+}
+
+/* Mapping (or unmapping) extended-palette banks switches the engine's extended palettes on (off):
+ * DISPCNT bit 30 for BG, bit 31 for OBJ, as the SDK's bgExtPlttOn_ / objExtPlttOn_ do. */
+static void ext_pltt_enable(int view, int on)
+{
+    u32 off, bit;
+    switch (view) {
+    case VIEW_BGEXT:      off = 0;      bit = 0x40000000u; break;
+    case VIEW_OBJEXT:     off = 0;      bit = 0x80000000u; break;
+    case VIEW_SUB_BGEXT:  off = 0x1000; bit = 0x40000000u; break;
+    case VIEW_SUB_OBJEXT: off = 0x1000; bit = 0x80000000u; break;
+    default: return;
+    }
+    if (on)
+        REG32(off) |= bit;
+    else
+        REG32(off) &= ~bit;
+}
+
 static u32 set_view(int view, u32 banks)
 {
-    u32 old = g_view_banks[view];
+    u32 old = g_view_banks[view], t = g_view_banks[VIEW_TEX], pl = g_view_banks[VIEW_TEXPLTT];
+    u32 at = 0;
+    int b;
     unmap_banks(banks);
     g_view_banks[view] = banks;
+    /* GX_VRAM_BGEXTPLTT_23_G: bank G holds slots 2-3 (offset 0x4000) */
+    if (view == VIEW_BGEXT && banks == (1u << BANK_G))
+        at = 0x4000;
+    for (b = 0; b < NBANKS; b++)        /* the SDK's mappings place the banks consecutively, in bank order */
+        if (banks & (1u << b)) {
+            g_view_ofs[view][b] = at;
+            at += k_bank_size[b];
+        }
+    ext_pltt_enable(view, banks != 0);
+    view_changed(t, pl);
     return old;
 }
 
 static u32 reset_view(int view)
 {
-    u32 old = g_view_banks[view];
+    u32 old = g_view_banks[view], t = g_view_banks[VIEW_TEX], pl = g_view_banks[VIEW_TEXPLTT];
     g_view_banks[view] = 0;
+    ext_pltt_enable(view, 0);
+    view_changed(t, pl);
     return old;
 }
 
@@ -91,7 +156,14 @@ void GX_SetBankForSubBG(u32 b)         { set_view(VIEW_SUB_BG, b); }
 void GX_SetBankForSubOBJ(u32 b)        { set_view(VIEW_SUB_OBJ, b); }
 void GX_SetBankForSubBGExtPltt(u32 b)  { set_view(VIEW_SUB_BGEXT, b); }
 void GX_SetBankForSubOBJExtPltt(u32 b) { set_view(VIEW_SUB_OBJEXT, b); }
-void GX_SetBankForLCDC(u32 b)          { g_view_banks[VIEW_LCDC] |= b; }
+/* LCDC: the banks leave whatever view they had (VRAMCNT holds one use per bank) */
+void GX_SetBankForLCDC(u32 b)
+{
+    u32 t = g_view_banks[VIEW_TEX], pl = g_view_banks[VIEW_TEXPLTT], lcdc = g_view_banks[VIEW_LCDC];
+    unmap_banks(b);
+    g_view_banks[VIEW_LCDC] = lcdc | b;
+    view_changed(t, pl);
+}
 
 u32 GX_ResetBankForBG(void)            { return reset_view(VIEW_BG); }
 u32 GX_ResetBankForOBJ(void)           { return reset_view(VIEW_OBJ); }
@@ -104,16 +176,12 @@ u32 GX_ResetBankForSubOBJ(void)        { return reset_view(VIEW_SUB_OBJ); }
 u32 GX_ResetBankForSubBGExtPltt(void)  { return reset_view(VIEW_SUB_BGEXT); }
 u32 GX_ResetBankForSubOBJExtPltt(void) { return reset_view(VIEW_SUB_OBJEXT); }
 
-/* "Disable" = reset and give the banks to the LCDC view with their contents cleared, as the SDK
- * does (it maps them to LCDC and clears them). */
+/* "Disable" = the banks are switched off (VRAMCNT enable bit clear) and unlocked, exactly as the
+ * SDK's disableBankForX_ does - their contents stay.  (This used to clear them, which destroyed
+ * textures and characters whenever a game unmapped a bank to remap it.) */
 static u32 disable_view(int view)
 {
-    u32 old = reset_view(view);
-    int b;
-    for (b = 0; b < NBANKS; b++)
-        if (old & (1u << b))
-            memset(kh_ds_vram + kh_ds_vram_bank_ofs[b], 0, k_bank_size[b]);
-    return old;
+    return reset_view(view);
 }
 
 u32 GX_DisableBankForBG(void)            { return disable_view(VIEW_BG); }
@@ -158,6 +226,7 @@ static void view_copy(int view, const void *src, u32 ofs, u32 size)
         if (n > size)
             n = size;
         memcpy(kh_ds_vram + v, s, n);
+        kh_vram_mark(v, n);
         s += n;
         ofs += n;
         size -= n;
@@ -178,10 +247,34 @@ static u32 bg_char_base(int sub, int bg)
 static u32 bg_scr_base(int sub, int bg)
 {
     u16 cnt = REG16((sub ? 0x1008 : 0x008) + bg * 2);
-    u32 base = ((cnt >> 8) & 0x1f) * 0x800;
+    int mode = REG32(sub ? 0x1000 : 0) & 7;
+    u32 base;
+    /* an extended BG in a bitmap form (BG3 in modes 3-5, BG2 in mode 5, BGxCNT bit 7) has its
+     * bitmap in 16 KiB units and no DISPCNT screen offset (as G2_GetBGxScrPtr); mode 6's large
+     * bitmap starts at the BG memory */
+    if (((bg == 3 && mode >= 3 && mode <= 5) || (bg == 2 && mode == 5)) && (cnt & 0x80))
+        return ((cnt >> 8) & 0x1f) * 0x4000;
+    if (bg == 2 && mode == 6)
+        return 0;
+    base = ((cnt >> 8) & 0x1f) * 0x800;
     if (!sub)
         base += ((REG32(0) >> 27) & 7) * 0x10000;
     return base;
+}
+
+/* Game-visible BG pointers.  On the DS an unmapped VRAM window still has an address and writes
+ * through it are dropped; a NULL here would instead turn tilemap/character writes into stores to
+ * low EE memory, which is the kernel's (the opening subtitles did exactly that before the MobiClip
+ * display setup was linked).  Unmapped windows therefore hand out a scratch sink. */
+#define VRAM_SINK_BYTES 0x20000
+static u8 g_vram_sink[VRAM_SINK_BYTES] __attribute__((aligned(64)));
+static void *bg_ptr(int view, u32 ofs)
+{
+    u8 *p = kh_nitro_view_ptr(view, ofs);
+    if (p)
+        return p;
+    KH_WARN("gx", "BG pointer into unmapped VRAM (view %d, offset 0x%x): writes are dropped", view, (unsigned)ofs);
+    return g_vram_sink + (ofs & (VRAM_SINK_BYTES / 2 - 1));
 }
 
 #define BGLOADS(N)                                                                                         \
@@ -189,10 +282,10 @@ static u32 bg_scr_base(int sub, int bg)
     void GX_LoadBG##N##Scr(const void *s, u32 o, u32 n)   { view_copy(VIEW_BG, s, bg_scr_base(0, N) + o, n); }      \
     void GXS_LoadBG##N##Char(const void *s, u32 o, u32 n) { view_copy(VIEW_SUB_BG, s, bg_char_base(1, N) + o, n); } \
     void GXS_LoadBG##N##Scr(const void *s, u32 o, u32 n)  { view_copy(VIEW_SUB_BG, s, bg_scr_base(1, N) + o, n); }  \
-    void *G2_GetBG##N##CharPtr(void)  { return kh_nitro_view_ptr(VIEW_BG, bg_char_base(0, N)); }                    \
-    void *G2_GetBG##N##ScrPtr(void)   { return kh_nitro_view_ptr(VIEW_BG, bg_scr_base(0, N)); }                     \
-    void *G2S_GetBG##N##CharPtr(void) { return kh_nitro_view_ptr(VIEW_SUB_BG, bg_char_base(1, N)); }                \
-    void *G2S_GetBG##N##ScrPtr(void)  { return kh_nitro_view_ptr(VIEW_SUB_BG, bg_scr_base(1, N)); }
+    void *G2_GetBG##N##CharPtr(void)  { return bg_ptr(VIEW_BG, bg_char_base(0, N)); }                    \
+    void *G2_GetBG##N##ScrPtr(void)   { return bg_ptr(VIEW_BG, bg_scr_base(0, N)); }                     \
+    void *G2S_GetBG##N##CharPtr(void) { return bg_ptr(VIEW_SUB_BG, bg_char_base(1, N)); }                \
+    void *G2S_GetBG##N##ScrPtr(void)  { return bg_ptr(VIEW_SUB_BG, bg_scr_base(1, N)); }
 BGLOADS(0)
 BGLOADS(1)
 BGLOADS(2)
@@ -244,7 +337,7 @@ void GX_Init(void)
 void GX_SetGraphicsMode(u32 dispMode, u32 bgMode, u32 bg0_3d)
 {
     u32 v = REG32(0);
-    v = (v & ~0x0003000fu) | (dispMode << 16) | bgMode | (bg0_3d << 3);
+    v = (v & ~0x000f000fu) | (dispMode << 16) | bgMode | (bg0_3d << 3);   /* display mode + VRAM block */
     REG32(0) = v;
 }
 

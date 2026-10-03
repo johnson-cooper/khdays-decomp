@@ -65,6 +65,18 @@ static u16 ds_keys(void)
     return keys & 0x2fff;
 }
 
+/* Some scenes (the opening movie loop, ...) poll the key registers themselves; keep the DS views
+ * of them current: KEYINPUT (buttons 0-9, active low) and the ARM7's X/Y word at 0x027fffa8
+ * (X bit 10, Y bit 11, debug 13 active low; hinge bit 15 = 0, lid open).  Called from Pad_Sample
+ * and at every VBlank (OS_WaitVBlankIntr), because those loops never call Pad_Sample. */
+static void mirror_key_registers(u16 keys)
+{
+    *(volatile u16 *)(kh_ds_io + 0x130) = (u16)(~keys & 0x3ff);
+    *(volatile u16 *)(kh_ds_hiram + 0x1ffa8) = (u16)(0x2c00 & ~(keys & 0x0c00));
+}
+
+void kh_ds_key_registers_update(void) { mirror_key_registers(ds_keys()); }
+
 int Pad_Sample(void)
 {
     u16 bit = 1;
@@ -75,12 +87,7 @@ int Pad_Sample(void)
 
     gPadHeld.prev = gPadHeld.cont;
     gPadHeld.cont = ds_keys();
-
-    /* Some scenes (the opening movie loop, ...) poll the key registers themselves; keep the DS
-     * views of them current: KEYINPUT (buttons 0-9, active low) and the ARM7's X/Y word at
-     * 0x027fffa8 (X bit 10, Y bit 11, debug 13 active low; hinge bit 15 = 0, lid open). */
-    *(volatile u16 *)(kh_ds_io + 0x130) = (u16)(~gPadHeld.cont & 0x3ff);
-    *(volatile u16 *)(kh_ds_hiram + 0x1ffa8) = (u16)(0x2c00 & ~(gPadHeld.cont & 0x0c00));
+    mirror_key_registers(gPadHeld.cont);
     prev = gPadHeld.prev;
     cont = (u16)gPadHeld.cont;
     gPadHeld.trig = ~prev & cont;

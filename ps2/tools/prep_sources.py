@@ -43,6 +43,30 @@ the original.  Every rule is mechanical and listed here:
   R12 decomp global names that collide with PS2SDK/newlib symbols are renamed in every decomp
       source (ps2/config/symbol_renames.txt), e.g. NitroSystem sound's internal `CreateThread`
       vs the EE kernel's.
+  R13 address-coupled pointer-table fragments that game code traverses as one DS memory range
+      get 4-byte alignment.  The EE compiler otherwise gives each top-level pointer array
+      8-byte alignment, inserting gaps that are not present in the original table.
+  R14 variadic functions that take the address of their last named parameter: on the ARM the
+      variadic prologue stores r0-r3 next to the stacked arguments, so `&last` points at a
+      contiguous block of 32-bit arguments (Text_FormatUtf16 hands `&c + 4` to a char* va_list;
+      the projectile Fire/SetupFlight functions pass `&rest` on as an argument array).  On the EE
+      the variadic arguments live in registers, so the block is rebuilt at function entry
+      (the named value, then KH_VA_WORDS words fetched with va_arg) and `&last` points into it.
+  R16 R8 for pointer variables: `volatile T *p = (volatile T *)0x04000440;` (a geometry register
+      or register block) followed by `*p = v;` / `p->field = v;` -> kh_ge_port_write1(offset
+      [+ offsetof(T, field)], v).  NitroSystem's NODEMIX drives MTX_MODE/STORE/RESTORE this way;
+      as plain stores the engine never saw them and skinned models used the wrong matrices.
+  R17 every definition in a file the DS links as pure data (no .text in delinks.txt) gets
+      4-byte alignment, as mwcc gave it.  gen_link.py places those objects at their DS-relative
+      addresses (code reaches neighbouring objects across files), and EE gcc's 8-byte boost for
+      arrays and structs would otherwise push them off.  Natural 8-byte types keep 8.  Runs
+      before R10, so zero-initialised data stays defined by its DS owner.
+  R18 the cloned GetVarRecordByIndex functions walk even-sized, length-prefixed message records.
+      ARMv5's LDR accepts their 2-mod-4 length fields (with rotate semantics); EE lw raises AdEL.
+      Read those little-endian fields bytewise through kh_read_s32_le_unaligned instead.
+  R15 literal ITCM addresses of data embedded in ITCM code (0x01ff8000-0x01ffffff is the top of
+      EE RAM, the main thread's stack) become the PS2 definitions of that data, listed in
+      ITCM_DATA (ps2/src/nitro/nitro_itcm_data.c), e.g. G3D's texture-matrix builder tables.
   R3  n32 ABI: callers that declare a function with a different 64-bit-ness than other callers
       (e.g. _s32_div_f read as `long long` = quotient|remainder<<32 vs `int` = quotient) are
       pointed at a variant symbol `<name>__<kind>`; the variants live in ps2/src/nitro/rt_*.c.
@@ -197,6 +221,56 @@ def cast_lvalues(text):
 ZERO_GLOBAL = re.compile(r"^((?!static\b|extern\b|typedef\b|return\b)[A-Za-z_][\w \t\*]*?\b[A-Za-z_]\w*(?:\s*\[[^\]]*\])*)\s*=\s*(?:0[uUlL]*|NULL|\(\s*void\s*\*\s*\)\s*0|\{\s*0?\s*\})\s*;", re.M)
 
 
+DATA_DEF = re.compile(r"(?m)^((?:static\s+)?(?!extern\b|typedef\b|return\b)(?:const\s+|volatile\s+)*"
+                      r"[A-Za-z_][\w \t\*]*?\b[A-Za-z_]\w*(?:\s*\[[^\]\n]*\])*"
+                      r"|\}\s*[A-Za-z_]\w*(?:\s*\[[^\]\n]*\])*"                 # `} name = {` (inline struct)
+                      r"|(?:static\s+)?(?:const\s+)?(?:struct|union)\s*\w*\s*\{[^}\n]*\}\s*[A-Za-z_]\w*"
+                      r"(?:\s*\[[^\]\n]*\])*)(\s*=)")                             # one-line struct { } name
+
+
+def align_data_file(text, relp):
+    """R17: definitions in a DS pure-data file get 4-byte alignment (see the header)."""
+    if relp not in ps2cfg.ds_data_files():
+        return text
+    n = [0]
+
+    def sub(m):
+        decl = m.group(1)
+        if "__attribute__" in decl:
+            return m.group(0)
+        n[0] += 1
+        # the declared type's own alignment: switches off gcc's 8-byte boost for arrays and
+        # structs without ever under-aligning (an inline anonymous struct cannot be named: 4)
+        typ = re.sub(r"\b[A-Za-z_]\w*\s*(?:\[[^\]\n]*\]\s*)*$", "", decl)
+        typ = re.sub(r"\b(static|const|volatile)\b", "", typ).strip()
+        anonymous = decl.lstrip().startswith("}") or "{" in decl or not typ
+        align = "4" if anonymous else f"__alignof__({typ})"
+        return decl + f" __attribute__((aligned({align})))" + m.group(2)
+    text = DATA_DEF.sub(sub, text)
+    if n[0]:
+        R17_FILES.append(relp)
+    return text
+
+
+R17_FILES = []
+
+
+def unaligned_record_lengths(text, relp):
+    """R18: make the known packed-message record boundary safe on the EE."""
+    if not os.path.basename(relp).endswith("_GetVarRecordByIndex.c"):
+        return text
+    old = "p += *(int *)p;"
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"prep R18: expected one packed length read in {relp}, found {count}")
+    R18_HITS.append(relp)
+    return '#include "platform/kh_unaligned.h"\n' + text.replace(
+        old, "p += kh_read_s32_le_unaligned(p);", 1)
+
+
+R18_HITS = []
+
+
 def zero_globals(text):
     return ZERO_GLOBAL.sub(r"\1;", text)
 
@@ -267,6 +341,135 @@ def rename_symbols(text):
 REG_PIN = re.compile(r"(\bregister\b[^;=]*?)\s+asm\s*\(\s*\"r\d+\"\s*\)")
 
 
+ADDRESS_COUPLED_ALIGN4 = {
+    # (src/engine/data/main_pointers_02041fd4.c, the first case found, is now covered by R17)
+    # camp menu .bss: DS addresses 4 mod 8 inside the overlay's word-packed .bss (gen_link.py
+    # pins them there; the EE's default 8-byte array alignment would forbid it)
+    "src/overlays/scenes/ov008_camp_menu/data/ov008_bss_02090f14.c": ("data_ov008_02090f24",),
+    "src/overlays/scenes/ov008_camp_menu/data/ov008_bss_02090fa0.c": ("data_ov008_02090fb4",),
+}
+
+
+def align_address_coupled_globals(text, relp):
+    """R13: retain the original contiguous 32-bit layout of split DS tables."""
+    for name in ADDRESS_COUPLED_ALIGN4.get(relp, ()):
+        # runs after R10, so a zero definition is already tentative (`T x[n];`)
+        pattern = re.compile(r"(?m)^((?!extern\b)[^/\n]*\b" + re.escape(name) +
+                             r"\s*(?:\[[^\]\n]*\])?)\s*([=;])")
+        text, count = pattern.subn(r"\1 __attribute__((aligned(4))) \2", text, count=1)
+        if count != 1:
+            raise SystemExit(f"prep R13: expected one definition of {name} in {relp}, found {count}")
+    return text
+
+
+GE_PTR_DECL = re.compile(
+    r"volatile\s+([A-Za-z_][\w ]*?)\s*\*\s*(\w+)\s*=\s*\(\s*volatile\s+[\w ]+?\*\s*\)\s*"
+    r"\(\(unsigned int\)kh_ds_io \+ (0x[0-9a-fA-F]+)\)\s*;")
+
+
+def geometry_port_pointers(text, relp):
+    """R16: stores through a pointer variable aimed at a geometry register (R8 for the pointer
+    form; runs after R5, which turned the literal into kh_ds_io + offset)."""
+    pos = 0
+    while True:
+        m = GE_PTR_DECL.search(text, pos)
+        if not m:
+            break
+        pos = m.end()
+        typ, name, off = m.group(1).strip(), m.group(2), int(m.group(3), 16)
+        if not 0x400 <= off < 0x700:
+            continue
+        rest = text[m.end():]
+        # statements only (a store starts a statement), never another declaration
+        rest = re.sub(r"(^|[;{}])(\s*)\*\s*" + re.escape(name) + r"\s*=(?!=)\s*([^;]+);",
+                      lambda s: "%s%skh_ge_port_write1(0x%x, (unsigned int)(%s));"
+                                % (s.group(1), s.group(2), off, s.group(3).strip()), rest, flags=re.M)
+        rest = re.sub(r"(^|[;{}])(\s*)" + re.escape(name) + r"\s*->\s*(\w+)\s*=(?!=)\s*([^;]+);",
+                      lambda s: "%s%skh_ge_port_write1(0x%x + (unsigned int)__builtin_offsetof(%s, %s), "
+                                "(unsigned int)(%s));" % (s.group(1), s.group(2), off, typ, s.group(3),
+                                                          s.group(4).strip()), rest, flags=re.M)
+        if re.search(r"(\*\s*" + re.escape(name) + r"|\b" + re.escape(name) + r"\s*->\s*\w+)\s*[|&+\-^]=", rest):
+            raise SystemExit(f"prep R16: read-modify-write through geometry register pointer {name} in {relp}")
+        text = text[:m.end()] + rest
+        R16_HITS.append(f"{relp}: {name} (0x{off:x})")
+    return text
+
+
+R16_HITS = []
+
+
+ITCM_DATA = {
+    0x01ffa1f8: "kh_itcm_data_01ffa1f8",
+    0x01ffa598: "kh_itcm_data_01ffa598",
+}
+ITCM_LIT = re.compile(r"\b0[xX]0*(1ff[89a-fA-F][0-9a-fA-F]{3})[uU]?\b")
+
+
+def itcm_data_literals(text, relp):
+    """R15: literal addresses of ITCM-resident data -> the PS2 definitions (see the header)."""
+    used = set()
+
+    def sub(m):
+        name = ITCM_DATA.get(int(m.group(1), 16))
+        if not name:
+            return m.group(0)
+        used.add(name)
+        return "((unsigned int)" + name + ")"
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", " ", text, flags=re.S)
+    if not any(int(m.group(1), 16) in ITCM_DATA for m in ITCM_LIT.finditer(code)):
+        return text
+    text = ITCM_LIT.sub(sub, text)
+    decl = "".join("extern void *const %s[];\n" % n for n in sorted(used))
+    return "/* PS2 R15 */\n" + decl + text
+
+
+VARIADIC_DEF = re.compile(r"^[A-Za-z_][\w \t\*]*?\b(\w+)\s*\(([^;{)]*?,\s*\.\.\.)\s*\)\s*\{", re.M)
+KH_VA_WORDS = 12
+
+
+def rebuild_variadic_blocks(text, relp):
+    """R14: give `&last` of a variadic function the DS meaning (see the header)."""
+    out, pos = [], 0
+    for m in VARIADIC_DEF.finditer(text):
+        named = [p.strip() for p in m.group(2).split(",")[:-1]]
+        last = re.findall(r"(\w+)\s*$", named[-1]) if named else []
+        if not last:
+            continue
+        last = last[0]
+        i, depth = m.end(), 1
+        while i < len(text) and depth:
+            depth += {"{": 1, "}": -1}.get(text[i], 0)
+            i += 1
+        body = text[m.end():i]
+        addr = re.compile(r"(?<![&\w])&\s*" + re.escape(last) + r"\b")
+        # files that inline the APCS va_start as a macro (`#define va_start(ap, last) ... &(last)
+        # ...`) hide the `&last` inside it: hand the macro the block instead
+        vstart = re.compile(r"\bva_start\s*\(\s*(\w+)\s*,\s*" + re.escape(last) + r"\s*\)")
+        macro = re.search(r"#\s*define\s+va_start\s*\([^)]*\)[^\n]*&", text) is not None
+        if not addr.search(body) and not (macro and vstart.search(body)):
+            continue
+        body = addr.sub("((__typeof__(" + last + ") *)__kh_va)", body)
+        if macro:
+            body = vstart.sub(lambda v: "va_start(" + v.group(1) + ", *((__typeof__(" + last + ") *)__kh_va))",
+                              body)
+        init = ("\n    /* PS2 R14: the DS argument block `&" + last + "` pointed at */"
+                "\n    unsigned int __kh_va[1 + " + str(KH_VA_WORDS) + "];"
+                "\n    { __builtin_va_list __kh_ap; int __kh_i;"
+                " __builtin_memcpy(__kh_va, &" + last + ", 4); __builtin_va_start(__kh_ap, " + last + ");"
+                " for (__kh_i = 1; __kh_i <= " + str(KH_VA_WORDS) + "; __kh_i++)"
+                " __kh_va[__kh_i] = __builtin_va_arg(__kh_ap, unsigned int);"
+                " __builtin_va_end(__kh_ap); }\n")
+        out.append(text[pos:m.end()])
+        out.append(init + body)
+        pos = i
+        R14_HITS.append(relp + ": " + m.group(1))
+    out.append(text[pos:])
+    return "".join(out)
+
+
+R14_HITS = []
+
+
 def load_variants():
     """-> {source path: [(function, variant)]} from ps2/config/abi_variants.txt"""
     out = {}
@@ -324,13 +527,19 @@ def main():
                             if a <= addr < b and why != "geometry engine":
                                 SEMANTIC_HITS.append((relp, "0x%08x" % addr, why))
                 new = rename_symbols(new)
+                new = unaligned_record_lengths(new, relp)
+                new = itcm_data_literals(new, relp)
                 new = cast_lvalues(new)
                 new = data_owned_to_extern(new, relp)
+                new = align_data_file(new, relp)
                 new = zero_globals(new)
+                new = align_address_coupled_globals(new, relp)
+                new = rebuild_variadic_blocks(new, relp)
                 new = drop_extern_of_static(new)
                 new = geometry_ports(new)
                 new = PACKED_BASE.sub("+ KH_DS_PACKED_PTR_BASE", new)
                 new = strip_comments_aware_sub(new, relp)
+                new = geometry_port_pointers(new, relp)
                 if new != text:
                     dst = os.path.join(OUT, relp)
                     hdr = "/* PS2: mechanically prepared copy of %s (ps2/tools/prep_sources.py). Do not edit. */\n" % relp
@@ -369,7 +578,13 @@ def main():
     pending = sorted({r for r, a, w in SEMANTIC_HITS if not ps2cfg.is_excluded(r) and r not in ok})
     print(f"prepared {n} sources into ps2/gen/src; {len(pending)} sources use side-effect registers "
           f"without a PS2 override (build/ps2/hw_semantic.txt); "
-          f"{len(AMBIGUOUS)} DS-range literals left alone as non-addresses (build/ps2/hw_ambiguous.txt)")
+          f"{len(AMBIGUOUS)} DS-range literals left alone as non-addresses (build/ps2/hw_ambiguous.txt); "
+          f"{len(R14_HITS)} variadic argument blocks rebuilt (R14); "
+          f"{len(R16_HITS)} geometry register pointers routed to the engine (R16); "
+          f"{len(R17_FILES)} data files aligned (R17); "
+          f"{len(R18_HITS)} packed record walkers made alignment-safe (R18)")
+    for h in R16_HITS:
+        print("  R16", h)
 
 
 if __name__ == "__main__":

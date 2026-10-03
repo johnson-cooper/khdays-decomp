@@ -22,7 +22,7 @@ IRX(iomanx) IRX(filexio)
 IRX(usbd) IRX(bdm) IRX(bdmfs_fatfs) IRX(usbmass_bd)
 IRX(mmceman)
 IRX(dev9) IRX(atad) IRX(hdd) IRX(fs)
-IRX(libsd) IRX(audsrv)
+IRX(libsd) IRX(khsnd)
 #undef IRX
 
 static int g_have_filexio;
@@ -117,7 +117,8 @@ int ps2_iop_load_audio(void)
     if (g_loaded_audio)
         return 0;
     g_loaded_audio = 1;
-    if (LOAD(libsd) || LOAD(audsrv))
+    /* libsd (FREESD) + khsnd, our PCM output module (ps2/iop/khsnd) */
+    if (LOAD(libsd) || LOAD(khsnd))
         return -1;
     return 0;
 }

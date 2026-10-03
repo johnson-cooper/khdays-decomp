@@ -161,6 +161,24 @@ u32 kh_ge_port_read(u32 off)
     return 0;
 }
 
+/* G3X_GetClipMtx / G3X_GetVectorMtx: the SDK waits for the geometry engine and copies
+ * CLIPMTX_RESULT / VECMTX_RESULT; here the queued commands are executed first, then the
+ * engine's matrices are read directly (0: success, as when GXSTAT reports the engine idle). */
+int G3X_GetClipMtx(void *dst)
+{
+    extern void kh_ge_get_clip_matrix(fx32 out[16]);
+    flush_buffer();
+    kh_ge_get_clip_matrix((fx32 *)dst);
+    return 0;
+}
+
+int G3X_GetVectorMtx(void *dst)
+{
+    flush_buffer();
+    kh_ge_get_vec_matrix((fx32 *)dst);
+    return 0;
+}
+
 /* --------------------------------------------------------------- G3X */
 
 void G3X_Init(void)

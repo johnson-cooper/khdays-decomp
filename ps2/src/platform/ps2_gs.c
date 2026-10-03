@@ -1,13 +1,16 @@
 /* GS back end: video mode, VRAM layout, frame packets, DMA submission, debug text.
  *
- * Video: interlaced, *field* rendering, 640x224 (NTSC) / 640x256 (PAL) per field.  DS content
- * is 192 lines per screen, so field resolution loses nothing while halving VRAM and fill cost.
+ * Video: interlaced, full-height 640x448 (NTSC) / 640x512 (PAL) framebuffers, FIELD mode (each
+ * field reads every other line).  The layouts put a DS screen into as few as 224 lines (two
+ * screens stacked): a half-height buffer would give it 112 and drop most of its 192 rows.
+ * 16-bit colour and Z keep the VRAM cost of the old 640x224 32-bit buffers (the DS's 2D output is
+ * 15-bit; the 3D is dithered).
  *
  * GS VRAM (4 MiB) at NTSC:
- *   2 x framebuffer PSMCT32 640x224   1,146,880
- *   1 x Z buffer   PSMZ24   640x224     573,440
+ *   2 x framebuffer PSMCT16 640x448   1,146,880
+ *   1 x Z buffer   PSMZ16   640x448     573,440
  *   debug font PSMT8 128x128 + CLUT      ~17,000
- *   texture residency pool             ~2.3 MiB (ps2/src/gfx/vram_cache.c)
+ *   texture pools                      ~2.3 MiB (ds2d.c, nitro_tex.c)
  *
  * Packets are built in cached EE RAM, written back with FlushCache and sent on the GIF DMA
  * channel (PATH3) in chunks under the 0xFFFF-qword DMA limit.  VU1/PATH1 is added later
@@ -33,7 +36,10 @@
 
 extern const unsigned char msx[];  /* 8x8 font from the SDK's libdebug */
 
-static int g_w = 640, g_h = 224;
+#define FB_PSM GS_PSM_16
+#define Z_PSM  GS_PSMZ_16
+
+static int g_w = 640, g_h = 448;
 static int g_fbp[2], g_zbp, g_draw;
 static int g_fontbp, g_fontclut;
 static int g_flip_pending;
@@ -53,21 +59,47 @@ void kh_gs_packet_init(KhGsPacket *p, uint32_t qwords)
 }
 
 /* ---- chain mode ---- */
-#define DMATAG(qwc, id, addr) ((uint64_t)((qwc) & 0xffff) | ((uint64_t)(id) << 28) | ((uint64_t)(uint32_t)(addr) << 32))
+#define KH_DMATAG(qwc, id, addr) ((uint64_t)((qwc) & 0xffff) | ((uint64_t)(id) << 28) | ((uint64_t)(uint32_t)(addr) << 32))
 enum { TAG_REFE = 0, TAG_CNT = 1, TAG_REF = 3, TAG_END = 7 };
 
 void kh_gs_chain_begin(KhGsPacket *p)
 {
     p->len = 0;
     p->tag = 0;
+    p->tag_vif[0] = p->tag_vif[1] = 0;
+    p->vu_busy = 0;
     kh_gs_packet_q(p, 0, 0);          /* CNT tag, filled in when closed */
+}
+
+/* VIFcodes for a tag whose qwc qwords are GIF data: DIRECT, after a FLUSH if VU1 work is queued */
+static uint64_t direct_codes(KhGsPacket *p, uint32_t qwc)
+{
+    uint32_t v0 = KH_VIF_NOP;
+    if (!qwc)
+        return 0;                     /* (DIRECT 0 would mean 65536 qwords) */
+    if (p->vu_busy) {
+        v0 = KH_VIF_FLUSH;
+        p->vu_busy = 0;
+    }
+    return (uint64_t)v0 | ((uint64_t)KH_VIF_DIRECT(qwc) << 32);
 }
 
 static void close_tag(KhGsPacket *p, int id)
 {
     uint64_t *t = (uint64_t *)p->base + p->tag * 2;
-    t[0] = DMATAG(p->len - p->tag - 1, id, 0);
-    t[1] = 0;
+    uint32_t qwc = p->len - p->tag - 1;
+    t[0] = KH_DMATAG(qwc, id, 0);
+    if (p->tag_vif[1])
+        t[1] = (uint64_t)p->tag_vif[0] | ((uint64_t)p->tag_vif[1] << 32);
+    else
+        t[1] = direct_codes(p, qwc);
+    p->tag_vif[0] = p->tag_vif[1] = 0;
+}
+
+static void open_tag(KhGsPacket *p)
+{
+    p->tag = (int32_t)p->len;
+    kh_gs_packet_q(p, 0, 0);
 }
 
 void kh_gs_chain_ref(KhGsPacket *p, const void *data, uint32_t qwc)
@@ -77,22 +109,72 @@ void kh_gs_chain_ref(KhGsPacket *p, const void *data, uint32_t qwc)
     close_tag(p, TAG_CNT);
     while (qwc) {
         uint32_t n = qwc > 0xffff ? 0xffff : qwc;
-        kh_gs_packet_q(p, DMATAG(n, TAG_REF, (uintptr_t)data), 0);
+        kh_gs_packet_q(p, KH_DMATAG(n, TAG_REF, (uintptr_t)data), direct_codes(p, n));
         data = (const uint8_t *)data + n * 16;
         qwc -= n;
     }
-    p->tag = (int32_t)p->len;
-    kh_gs_packet_q(p, 0, 0);
+    open_tag(p);
+}
+
+void kh_gs_chain_vif(KhGsPacket *p, uint32_t vif0, uint32_t vif1)
+{
+    close_tag(p, TAG_CNT);
+    open_tag(p);
+    p->tag_vif[0] = vif0;
+    p->tag_vif[1] = vif1;
+}
+
+void kh_gs_chain_vif_ref(KhGsPacket *p, uint32_t vif0, uint32_t vif1, const void *ref, uint32_t qwc)
+{
+    close_tag(p, TAG_CNT);
+    kh_gs_packet_q(p, KH_DMATAG(qwc, TAG_REF, (uintptr_t)ref), (uint64_t)vif0 | ((uint64_t)vif1 << 32));
+    open_tag(p);
 }
 
 void kh_gs_chain_send(KhGsPacket *p)
 {
     close_tag(p, TAG_END);
     FlushCache(0);
-    dma_channel_wait(DMA_CHANNEL_GIF, 0);
-    dma_channel_send_chain(DMA_CHANNEL_GIF, p->base, (int)p->len, 0, 0);
-    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_send_chain(DMA_CHANNEL_VIF1, p->base, (int)p->len, DMA_FLAG_TRANSFERTAG, 0);
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     p->len = 0;
+}
+
+/* ------------------------------------------------------------------ VU1 */
+
+/* weak: the platform test ELF links this file without the microprograms */
+extern unsigned char kh_vu1_tri_start[] __attribute__((weak)), kh_vu1_tri_end[] __attribute__((weak));
+
+/* Upload the microprograms to VU1 micro memory (MPG through a VIF1 chain) and set up the VIF
+ * double buffering the 3D path uses (ps2/src/nitro/nitro_ge.c). */
+void kh_vu1_init(void)
+{
+    static uint64_t chain[2 * 64] __attribute__((aligned(64)));
+    uint32_t n = (uint32_t)(kh_vu1_tri_end - kh_vu1_tri_start) / 8, q = 0;
+    if (!kh_vu1_tri_start)
+        return;
+    if (n > 256 || (n & 1))
+        kh_panic("VU1 microprogram size %u", (unsigned)n);
+    /* CNT: FLUSHE, MPG n at 0 -- the program follows as the tag's data */
+    chain[q * 2] = KH_DMATAG(n / 2, TAG_CNT, 0);
+    chain[q * 2 + 1] = (uint64_t)KH_VIF_FLUSHE | ((uint64_t)KH_VIF_MPG(n, 0) << 32);
+    q++;
+    memcpy(&chain[q * 2], kh_vu1_tri_start, n * 8);
+    q += n / 2;
+    /* END: STCYCL 1,1; BASE 0, OFFSET 512 come in a second tag */
+    chain[q * 2] = KH_DMATAG(0, TAG_CNT, 0);
+    chain[q * 2 + 1] = (uint64_t)KH_VIF_STCYCL(1, 1) | ((uint64_t)KH_VIF_BASE(0) << 32);
+    q++;
+    chain[q * 2] = KH_DMATAG(0, TAG_END, 0);
+    chain[q * 2 + 1] = (uint64_t)KH_VIF_OFFSET(512) | ((uint64_t)KH_VIF_NOP << 32);
+    q++;
+    if (q * 2 > sizeof chain / sizeof chain[0])
+        kh_panic("VU1 init chain overflow");
+    FlushCache(0);
+    dma_channel_send_chain(DMA_CHANNEL_VIF1, chain, (int)q, DMA_FLAG_TRANSFERTAG, 0);
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    KH_INFO("gs", "VU1 microprogram: %u instructions", (unsigned)n);
 }
 
 void kh_gs_upload_ref(KhGsPacket *p, const void *src, int bp, int bw, int psm, int x, int y, int w, int h)
@@ -107,6 +189,11 @@ void kh_gs_upload_ref(KhGsPacket *p, const void *src, int bp, int bw, int psm, i
     kh_gs_packet_q(p, GS_SET_TRXDIR(0), GS_REG_TRXDIR);
     kh_gs_packet_q(p, GIF_SET_TAG(qw, 1, 0, 0, GIF_FLG_IMAGE, 0), 0);
     kh_gs_chain_ref(p, src, qw);
+    /* texels written by a transfer are only guaranteed to be sampled after TEXFLUSH; without it
+     * the GS (and PCSX2's texture cache) can keep drawing what was there before (old HUD digits
+     * over the pause menu's buttons) */
+    kh_gs_packet_ad_begin(p, 1);
+    kh_gs_packet_q(p, 0, GS_REG_TEXFLUSH);
     kh_prof_tex_upload(qw * 16);
 }
 
@@ -207,7 +294,7 @@ void kh_gs_upload(KhGsPacket *p, const void *src, int bp, int bw, int psm, int w
     memcpy((u128 *)p->base + p->len, src, bytes);
     p->len += qw;
     kh_gs_packet_ad_begin(p, 1);
-    ad(p, GS_REG_TEXFLUSH, 0);
+    kh_gs_packet_q(p, 0, GS_REG_TEXFLUSH);
     kh_prof_tex_upload(bytes);
 }
 
@@ -223,29 +310,33 @@ int kh_video_init(KhVideoMode mode)
     else
         pal = (mode == KH_VIDEO_PAL);
     g_w = 640;
-    g_h = pal ? 256 : 224;
+    g_h = pal ? 512 : 448;
 
     dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
     dma_channel_fast_waits(DMA_CHANNEL_GIF);
+    dma_channel_initialize(DMA_CHANNEL_VIF1, NULL, 0);
+    dma_channel_fast_waits(DMA_CHANNEL_VIF1);
 
     graph_vram_clear();
     g_vram_top = 0;
-    g_fbp[0] = vram_alloc(g_w, g_h, GS_PSM_32);
-    g_fbp[1] = vram_alloc(g_w, g_h, GS_PSM_32);
-    g_zbp = vram_alloc(g_w, g_h, GS_PSMZ_24);
+    g_fbp[0] = vram_alloc(g_w, g_h, FB_PSM);
+    g_fbp[1] = vram_alloc(g_w, g_h, FB_PSM);
+    g_zbp = vram_alloc(g_w, g_h, Z_PSM);
 
-    graph_set_mode(GRAPH_MODE_INTERLACED, pal ? GRAPH_MODE_PAL : GRAPH_MODE_NTSC, GRAPH_MODE_FIELD, GRAPH_DISABLE);
-    graph_set_screen(0, 0, g_w, g_h * 2);
+    /* full-height buffer, interlaced FIELD mode: each field reads every other line of it */
+    graph_set_mode(GRAPH_MODE_INTERLACED, pal ? GRAPH_MODE_PAL : GRAPH_MODE_NTSC, GRAPH_MODE_FIELD, GRAPH_ENABLE);
+    graph_set_screen(0, 0, g_w, g_h);
     graph_set_bgcolor(0, 0, 0);
-    graph_set_framebuffer_filtered(g_fbp[1], g_w, GS_PSM_32, 0, 0);
+    graph_set_framebuffer_filtered(g_fbp[1], g_w, FB_PSM, 0, 0);
     graph_enable_output();
     upload_font();          /* after the mode set: it resets the GS */
+    kh_vu1_init();
 
     ps2_time_set_refresh(pal ? 50 : 60);
     kh_gs_packet_init(&g_frame_pkt[0], KH_GS_FRAME_QWORDS);
     kh_gs_packet_init(&g_frame_pkt[1], KH_GS_FRAME_QWORDS);
     g_draw = 0;
-    KH_INFO("gs", "%s %dx%d field mode, VRAM fixed %u KiB, texture pool %u KiB", pal ? "PAL" : "NTSC",
+    KH_INFO("gs", "%s %dx%d 16-bit field mode, VRAM fixed %u KiB, texture pool %u KiB", pal ? "PAL" : "NTSC",
             g_w, g_h, g_vram_top / 1024, (GS_VRAM_BYTES - g_vram_top) / 1024);
     return 0;
 }
@@ -253,8 +344,16 @@ int kh_video_init(KhVideoMode mode)
 int kh_video_width(void) { return g_w; }
 
 /* ZBUF_1 for the frame's Z buffer, with Z writes masked or not */
-uint64_t kh_gs_zbuf_value(int mask_writes) { return GS_SET_ZBUF(g_zbp / 2048, GS_PSMZ_24, mask_writes ? 1 : 0); }
+uint64_t kh_gs_zbuf_value(int mask_writes) { return GS_SET_ZBUF(g_zbp / 2048, Z_PSM, mask_writes ? 1 : 0); }
+/* the largest Z value the Z buffer holds (the 3D projection scales into 0..this) */
+float kh_gs_z_max(void) { return 65535.0f; }
 int kh_video_height(void) { return g_h; }
+
+/* TEX0 that reads the frame being drawn as a PSMCT32 texture (1024x512 addressing) */
+uint64_t kh_gs_frame_tex0(void) { return GS_SET_TEX0(g_fbp[g_draw] / 64, g_w / 64, FB_PSM, 10, 9, 1, 0, 0, 0, 0, 0, 0); }
+
+/* FRAME_1 of the frame being drawn, with write mask fbmsk (bits set = not written) */
+uint64_t kh_gs_frame_value(uint32_t fbmsk) { return GS_SET_FRAME(g_fbp[g_draw] / 2048, g_w / 64, FB_PSM, fbmsk); }
 
 KhGsPacket *kh_gs_frame_packet(void) { return &g_frame_pkt[g_draw]; }
 
@@ -263,18 +362,22 @@ void kh_video_begin_frame(uint32_t rgb)
     KhGsPacket *p = &g_frame_pkt[g_draw];
     kh_gs_chain_begin(p);
     kh_gs_packet_ad_begin(p, 12);
-    ad(p, GS_REG_FRAME_1, GS_SET_FRAME(g_fbp[g_draw] / 2048, g_w / 64, GS_PSM_32, 0));
-    ad(p, GS_REG_ZBUF_1, GS_SET_ZBUF(g_zbp / 2048, GS_PSMZ_24, 0));
+    ad(p, GS_REG_FRAME_1, GS_SET_FRAME(g_fbp[g_draw] / 2048, g_w / 64, FB_PSM, 0));
+    ad(p, GS_REG_ZBUF_1, GS_SET_ZBUF(g_zbp / 2048, Z_PSM, 0));
     ad(p, GS_REG_XYOFFSET_1, GS_SET_XYOFFSET(KH_GS_OFS << 4, KH_GS_OFS << 4));
     ad(p, GS_REG_SCISSOR_1, GS_SET_SCISSOR(0, g_w - 1, 0, g_h - 1));
     ad(p, GS_REG_PRMODECONT, GS_SET_PRMODECONT(1));
     ad(p, GS_REG_COLCLAMP, GS_SET_COLCLAMP(1));
-    ad(p, GS_REG_DTHE, GS_SET_DTHE(0));
+    ad(p, GS_REG_DTHE, GS_SET_DTHE(1));   /* 16-bit output: ordered dither (DIMX below) */
     ad(p, GS_REG_TEST_1, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, 1));   /* Z always, for the clear */
     ad(p, GS_REG_PRIM, GS_SET_PRIM(GS_PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0));
     ad(p, GS_REG_RGBAQ, GS_SET_RGBAQ((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 0x80, 0x3f800000));
     ad(p, GS_REG_XYZ2, GS_SET_XYZ(KH_GS_OFS << 4, KH_GS_OFS << 4, 0));
     ad(p, GS_REG_XYZ2, GS_SET_XYZ((KH_GS_OFS + g_w) << 4, (KH_GS_OFS + g_h) << 4, 0));
+    /* 4x4 Bayer offsets 0..3 only: DS 2D colours (5-bit values << 3, drawn unmodulated) stay
+     * exact, gradients of the 3D layer (shading, fog, blending) are dithered */
+    kh_gs_packet_ad_begin(p, 1);
+    ad(p, GS_REG_DIMX, GS_SET_DIMX(0, 2, 0, 2, 3, 1, 3, 1, 0, 2, 0, 2, 3, 1, 3, 1));
     kh_gs_packet_ad_begin(p, 1);
     ad(p, GS_REG_TEST_1, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, 2)); /* Z GEQUAL from here on */
 }
@@ -322,6 +425,7 @@ void kh_video_submit_frame(void)
     kh_gs_packet_ad_begin(p, 1);
     ad(p, GS_REG_FINISH, 1);
 
+    KH_PROF_ADD(KH_PC_GIF_BYTES, p->len * 16);
     kh_prof_begin(KH_PROF_GS_WAIT);
     *(volatile uint64_t *)0x12001000 = 2;       /* clear CSR.FINISH */
     kh_gs_chain_send(p);
@@ -336,7 +440,7 @@ void kh_video_flip(void)
     if (!g_flip_pending)
         return;
     g_flip_pending = 0;
-    graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, GS_PSM_32, 0, 0);
+    graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
     g_draw ^= 1;
 }
 

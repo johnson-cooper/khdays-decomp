@@ -11,9 +11,9 @@
 
 #include "nitro/types.h"
 
-const u16 data_ov002_0207deb8[1];
+const u16 data_ov002_0207deb8[1] __attribute__((aligned(__alignof__(u16)))) = { 0 };
 
-const u16 data_ov002_0207deba[357] = {
+const u16 data_ov002_0207deba[357] __attribute__((aligned(__alignof__(u16)))) = {
       0,   1,   0,   2,   0,   3,   0,   4,   0,   5,   0,   6,
       1,   7,   1,   8,   1,   9,   1,  10,   1,  11,   1,  12,
       1,  13,   1,  14,   2,  15,   3,  16,   3,  17,   3,  18,

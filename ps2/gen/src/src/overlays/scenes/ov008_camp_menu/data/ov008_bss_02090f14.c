@@ -18,5 +18,5 @@ void *data_ov008_02090f14;
 int data_ov008_02090f20;
 void *data_ov008_02090f1c;
 u16 data_ov008_02090f18[2] = {0, 0};
-int data_ov008_02090f24[7];
+int data_ov008_02090f24[7] __attribute__((aligned(4))) ;
 u16 data_ov008_02090f40[48];

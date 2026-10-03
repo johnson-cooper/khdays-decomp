@@ -1,5 +1,6 @@
 # ── Game ROM & anything derived from it (COPYRIGHT — never commit) ────────────
 *.nds
+*.log
 /dsd_extract/
 /extract/
 /asm/

@@ -18,4 +18,4 @@ void *data_ov008_02090fac;
 void *data_ov008_02090fa8;
 void *data_ov008_02090fa4;
 void *data_ov008_02090fa0;
-int data_ov008_02090fb4[3];
+int data_ov008_02090fb4[3] __attribute__((aligned(4))) ;

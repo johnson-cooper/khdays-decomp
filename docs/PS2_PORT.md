@@ -21,8 +21,13 @@ Nothing else: the toolchain, PS2SDK packages and IOP modules come from PS2BUILD.
 
 ```sh
 ./build-ps2.sh            # full: prepare sources, generate ps2.yaml + link glue, build
+KH_PS2_DEBUG=1 ./build-ps2.sh
+                           # diagnostic build: INFO/debug logs, profiler, expensive checks
 ps2build build            # same result once the generated files exist (they are committed)
 ```
+
+Normal builds leave routine logging and profiling disabled. Warnings, errors and panic diagnostics
+remain enabled.
 
 Outputs: `build/bin/khdays-ps2.elf` (the game) and `build/bin/khdays-platform-test.elf` (platform
 diagnostics: boot device, pads, memory, GS).  A full build compiles ~24,000 files; later builds are
@@ -78,13 +83,10 @@ hardware-register accesses in ~400 game functions.
 
 ### Region note
 
-The decomp is the EU build. The ROM available during development is the **US** build (`YKGE`).
-The PS2 port runs the decomp's (EU) code and reads *assets* from the user's ROM. Assets are
-opened by path (`FS_OpenFile(Msg_BuildLangPath(name))`), not by file id, so region differences
-reduce to which language directories exist (US: `en`, `fr` for most UI; EU adds `de`, `it`,
-`es`). The language setting is forced to one present in the supplied ROM. File-id based access
-(FS_OpenFileFast) is not used by game code. This must be re-verified per asset family as
-subsystems come up; see *Open questions*.
+The active development data is the European **YKGP** release, matching the decompiled program.
+`make_ps2data.py` records the ROM game code in the pack header and the PS2 VFS logs it during
+startup; bring-up builds are expected to report `code target YKGP; data source YKGP`. Other regions are not an active
+compatibility target until the matching EU port is playable.
 
 ---
 
@@ -152,22 +154,41 @@ lists (`Gfx_SubmitCachedCommandBlock`, `GX_SendFifoWords` in 49 files) and billb
 packed GX geometry commands (`BEGIN_VTXS`, `VTX_16/10/XY/…`, `NORMAL`, `TEXCOORD`, `COLOR`,
 `MTX_*`, `POLYGON_ATTR`, `TEXIMAGE_PARAM`, `PLTT_BASE`) — to the geometry engine.
 
-PS2 design:
+PS2 implementation (as built, 2026-10-01):
 
-1. **Geometry front end** (`ps2/src/gfx/ge.c`): a DS-geometry-state tracker that implements
-   the matrix stack, the current matrices (projection, position, vector, texture), material
-   and polygon state, and decodes packed command lists. It is not a FIFO emulator: commands are
-   decoded from memory (display lists, `G3_*` calls) straight into
-   **batched EE vertex buffers** (per material/texture/state), with fixed point converted once
-   at this boundary.
-2. **GS back end** (`ps2/src/gfx/gs_*.c`): converts batches into GIF packets (triangles /
-   strips, `PRIM` with Gouraud, texture, alpha, fog, Z) and sends them by DMA (path 3 first,
-   path 1 via VU1 later). DS depth (`W`/`Z` buffering, 1/4096 fixed) maps to a 24-bit Z buffer.
-3. **Offline pre-conversion** (next step after correctness): NSBMD display lists are converted
-   on the PC into PS2 vertex batches + VU1 packets (the SBC stays: it drives matrices,
-   materials and visibility), so the EE no longer decodes display lists per frame.
-4. VU1 (transform, lighting, clipping) replaces the EE transform once profiling says so; the
-   batch format is designed for `VIF UNPACK` from day one.
+```
+EE   game logic, G3D SBC walk (matrices, materials)                 [game code]
+EE   geometry front end  ps2/src/nitro/nitro_ge.c
+       packed-command decoder (parameters used in place), DS matrix stack in DS fixed point
+       (MULT+3xMADD dot products = DS 64-bit precision), lighting (fixed point)
+VU0  (macro mode) float clip matrix = pos x proj, vertex transform (LQC2/VMULA../SQC2)
+EE   face culling (3x3 homogeneous determinant, no divides), outcodes, guard-band clipping
+       (only near/far always clipped; x/y only beyond 4x the view volume), triangles appended
+       to per-pass lists (opaque / translucent) in the VU1 input layout
+VIF1 DMA chain (the whole frame packet): GS state + 2D as DIRECT (PATH2), each run of same-
+       state triangles as UNPACK V4-32 *by reference* from the triangle list (no copy) + MSCAL,
+       double-buffered through BASE/OFFSET; FLUSH before DIRECT data that follows VU1 work
+VU1  ps2/src/vu/vu1_tri.vsm: 1/w, viewport + 24-bit Z mapping, ST*q, colour scale,
+       GIF PACKED (ST RGBAQ XYZ2) -> XGKICK (PATH1), output double-buffered
+GS   rasterisation, texture, blending, Z, alpha/destination-alpha tests
+```
+
+The EE projection path is kept (`kh_ge_use_vu1 = 0`) for A/B comparison.  A next step is
+offline pre-conversion of NSBMD display lists into VU1 vertex batches, so the EE stops
+decoding display lists per frame; with the current costs (6.6 ms GE in Mission 00, 14.4 ms in
+the Grey Area at 30 fps) it is not yet needed.
+
+DS 3D semantics implemented on the GS: opaque / translucent passes (translucent = polygon alpha
+1-30 **or a translucent texture format, A3I5 / A5I3**), translucent depth writes per
+POLYGON_ATTR bit 11, the rear plane (CLEAR_COLOR colour and alpha), **shadow polygons**
+(POLYGON_ATTR mode 3: mask polygons, ID 0, set a stencil bit where they fail the depth test;
+shadow polygons draw only where it is set - on the GS the stencil is frame-buffer alpha bit 7,
+written with FBA/FBMSK and tested with DATE), mirrored texture repeat (a doubled, mirrored copy
+stored once per cache miss), and the 3D layer drawn at **BG0's priority** among the 2D layers
+(only when BG0 is enabled, as the DS).  Not modelled yet: wireframe (alpha 0, drawn solid),
+polygon-ID rules for translucent overdraw, fog, edge marking, toon/highlight tables (none of
+these were seen in the scenes audited so far: the geometry front end logs each polygon mode and
+DISP3DCNT setting the first time it is used).
 
 DS lighting (4 directional lights, material diffuse/ambient/specular/emission, toon/shininess
 tables), fog, edge marking, translucency (polygon ID rules) and alpha blending are mapped to GS
@@ -205,6 +226,26 @@ PS2 plan:
 owner, generation and last-used frame; misses upload by DMA (path 3 IMAGE), eviction is LRU
 among entries not used this frame. Framebuffers and Z are allocated first and never evicted.
 
+As built (`ps2/src/nitro/nitro_tex.c`): converted once per cache miss and uploaded by REF DMA
+(no per-frame conversion; 0 misses per frame in steady state).  The key is the texture's VRAM
+offset, size, format, colour-0 flag and palette, plus only the mirror bits that change the stored
+texels.  Texture VRAM also changes outside `GX_LoadTex` (VRAM-transfer tasks, LCDC writes), so an
+entry's source texels + palette are checksummed and re-verified on its first use each frame
+(every word up to 4 KiB, 256 sampled words above); a change re-converts it (`stale` in the perf
+line).  GS space is allocated by the texture's exact block footprint (`gs_footprint`: PSMT8/PSMT4
+images are block-swizzled, so a small texture's last block can lie far past w x h x bpp): sizing
+by bytes let a CLUT placed after it overwrite texels (the dashed title logo).
+
+**DS VRAM model** (`nitro_gx.c`, `nitro_mi.c`), three rules the cutscenes depend on:
+* a bank's place in a view is fixed when the view is set; taking a bank away (to LCDC, to the
+  other engine) leaves the others where they are - texture slot 3 stays slot 3;
+* `GX_SetBankForLCDC` takes the banks out of their other views (VRAMCNT holds one use per bank);
+  `GX_DisableBankFor*` switches banks off without clearing them, as the SDK's `disableBankForX_`;
+* CPU fills/copies into VRAM (MI) only land in banks mapped CPU-visibly (LCDC, BG, OBJ).  Scene
+  setups clear the whole LCDC window (`MIi_CpuClearFast(0, 0x06800000, 0xa4000)`); on the DS that
+  cannot touch banks mapped as texture memory.  Letting it do so zeroed the character textures
+  the cutscenes then drew (black eyes on Roxas, black close-ups once the cache checked contents).
+
 ### 3.8 Sprites / HUD / 2D
 
 The HUD, menus, text and most of the UI are DS 2D engines: BG layers (text/affine tilemaps,
@@ -221,6 +262,45 @@ the logical 2D VRAM/palette/OAM contents written through the SDK (`GX_LoadBG*Cha
 entries as sprites, in DS priority order, with DS blend equations mapped to GS alpha.
 Register-poking game functions are replaced by overrides calling this API — no DS addresses
 remain.
+
+As built (`ps2/src/gfx/ds2d.c`):
+* text BGs: one pass over the 33x25 visible entries, tiles bucketed by palette, coordinates from
+  per-row/column tables, sprites in REGLIST mode (2 qwords each);
+* CLUTs: DS BGR555 = GS PSMCT16; 256 colours as a 16x16 CSM1 CLUT, **16-colour palettes each in
+  their own 64-word block** (CSA cannot select a palette of a larger CLUT for 4-bit textures:
+  TEX0.CLD loads the 16 entries *at CBP* - using CSA drew every 4bpp tile/sprite with palette 0);
+* affine BGs (8-bit maps), extended tiled affine BGs (16-bit maps), bitmap BGs, affine OBJs
+  (double-size boxes, clipped exactly with SCISSOR) - drawn as forward-mapped textured
+  triangles; windows WIN0/WIN1 (screen cut into rectangles, one SCISSOR pass per rectangle and
+  layer, effect bit per region); BLDCNT alpha (exact when EVA+EVB = 16), darken, **brighten**
+  (a second, brightened CLUT set); master brightness;
+* display capture (engine A, DISPCAPCNT): VRAM display of the bank being captured draws the
+  capture source and feeds back the previous capture (a 256x192 PSMCT16 GS image, blended with
+  FIX alpha EVB) - the cutscenes' blur / cross-fades;
+* extended palettes (DISPCNT bits 30/31; BG slots 0-3, BG0/1 slot select BGxCNT bit 13; OBJ):
+  each palette in use is converted into a frame-lifetime buffer and loaded as a 16x16 CLUT right
+  before its TEX0 - the opening monologue and many cutscene backgrounds are ext-palette BGs;
+* 3D layer over 2D: translucent 3D pixels blend onto the 2D layers below only where BG0 is a
+  BLDCNT first target; otherwise they replace them (coverage blending, `nitro_ge.c`), as the
+  title logo needs;
+* bitmap BGs: a non-wrapping bitmap is drawn as its own quad (transparent outside, so the movie
+  frames sit 16 lines down), rows past the mapped VRAM are skipped; the screen-base of a bitmap
+  BG is in 16 KiB units (`G2_GetBGxScrPtr`, `nitro_gx.c`);
+* bitmap OBJs (mode 3): 2D (128/256 wide) and 1D layouts, direct colour; the rows a pass needs
+  are uploaded once (the movie player shows every other frame as a 4x3 grid of 64x64 bitmap OBJs).
+* OBJ atlases cover the whole 128 KiB OBJ area (1D mapping with 128/256-byte units reaches past
+  64 KiB - the camp menu's buttons): 128 tiles per column, 128x1024 PSMT8 / 256x1024 PSMT4;
+* window cells are cut with the GS fill rule (ceil of the scaled edges), so no row between two
+  cells is left to the backdrop at non-integer scales;
+* L3 cycles the layouts: vertical (default), horizontal, top screen only, bottom screen only.
+* sprite UVs are clamped to the 14-bit UV range (1023.9375): the far edge of an atlas column's last
+  tile row (v = 1024) wrapped to 0 and drew the column backwards (boxes on highlighted menu rows).
+Output: 640x448 (PAL 640x512) 16-bit colour + 16-bit Z, interlaced FIELD mode, ordered dither with
+non-negative offsets (DS 2D colours stay exact).  Every frame is presented, also in pause mode 1
+(cutscene pause): a frame without geometry commands redraws the last 3D frame (nitro_ge.c), as the
+DS keeps displaying its last rendered 3D image.
+Not yet: OBJ window, mosaic, OBJ semi-transparency (bitmap OBJ alpha is drawn opaque), 3D layer
+scroll.  Each logs once when used.
 
 ### 3.9 Input
 
@@ -298,19 +378,47 @@ PSG/noise channels. The single `snd/*.sdat` (60 MiB) holds SSEQ (sequences), SBN
 SWAR (wave archives) and STRM streams.
 
 PS2: the ARM7 driver is **replaced**, not run: `ps2/src/audio/` implements the SND command
-interface (the ARM9 side of NNS SND stays, its commands go to our driver instead of PXI).
-The sequencer and envelope logic runs on the EE at the DS tick rate; voices go to **SPU2** —
-SWAR waves pre-converted offline to SPU2 ADPCM (VAG) and uploaded per bank to SPU2 RAM
-(2 MiB) with residency management; streams go through `audsrv`. No per-frame codec work on
-the EE.
+interface (the ARM9 side of NNS SND stays; `PXI_SendWordByFifo` hands its command lists to our
+driver instead of the ARM7):
+* `snd_seq.c` - the SSEQ sequencer (16 players x 16 tracks, the full command set incl. variables,
+  random/conditional prefixes, ties, portamento), SBNK instrument lookup (drum sets, key splits),
+  SWAR wave lookup;
+* `snd_chan.c` - 16 channels (PCM8/PCM16/IMA-ADPCM with loop state, PSG duty, noise LFSR), the
+  ADSR envelope in 1/10 dB, sweep, LFO, the SDK's channel allocation order and type masks, and the
+  mixer (48 kHz stereo, the driver updated at the DS rate of 191.97 Hz between mix slices);
+* `snd_driver.c` - the command front end (sequence start/stop/pause/skip, player and track
+  parameters, variables, direct PCM channels with timers - the stream players and the movie
+  audio -, locks, alarms, master volume) and the shared work area the ARM9 polls (player status,
+  channel status, tick counters, variables).
+Output (`ps2/src/platform/ps2_audio.c`): an EE thread (priority 27) renders one 512-frame half
+(2048 bytes, 10.7 ms) per SIF RPC to **`khsnd.irx`** (`ps2/iop/khsnd/`), our IOP module. This
+gives the lower-priority music-stream refill thread a scheduling point between halves while keeping
+the SIF rate at about 94 calls/s. Each half uses the SPU2 block-input layout
+`[256 L][256 R][256 L][256 R]`. Libsd loop transfer
+feeds SPU2 core 1 from a two-half buffer refilled from an 8-block ring; the RPC blocks while the
+ring is full, so the EE thread is paced by the SPU2 clock. The stream worker runs at priority 26,
+one level above the mixer, so refills can preempt a render immediately. Stream-refill alarms
+advance from the
+number of samples actually rendered, not VBlank time, so rendering ahead cannot overwrite a
+stream block the mixer is still reading. (PS2BUILD's `audsrv.irx` is a voice-only build without
+PCM streaming.) The per-channel
+status lines of the `[snd]` log are `KH_PS2_DEBUG` only.
+
+**Soft reset** (`OS_ResetSystem`: the pause menu's Title Screen) re-executes the ELF
+(`kh_platform_restart`, LoadExecPS2 of argv[0]); the boot path rebuilds everything.
 
 ### 3.16 Save data
 
 `CARD_*` backup (EEPROM/flash) from the save scenes (ov009, ov000, ov008/ov025 run a card
 thread). PS2: save slots become files in a memory-card directory (`BASLUS-KHDAYS/` style name,
-`icon.sys` + icon), written atomically (write `*.tmp`, verify, rename). Bring-up uses a plain
-file on the boot device. The DS backup API is emulated at the *API* level only
-(read/write/verify by offset) over the slot file.
+`icon.sys` + icon). The DS backup API is emulated at the *API* level only (read/write/verify by
+offset) over a 64 KiB image. Bring-up storage (`ps2/src/nitro/nitro_card.c`) is two slot files on
+the boot device, `khdays_a.sav` / `khdays_b.sav`, each the image plus a {magic, version, sequence,
+CRC-32} trailer: a save overwrites the slot that does not hold the newest valid image, so an
+interrupted write leaves the previous save intact (its CRC fails at load and the other slot is
+used). No rename is needed -- PCSX2's `host:` is a legacy ioman device without one, and the old
+temp-file + remove + rename scheme was not atomic anyway. A raw 64 KiB `khdays.sav` from older
+builds is still read.
 
 ### 3.17 Threading
 
@@ -354,12 +462,24 @@ per arena and for the FND heaps (debug overlay + serial log).
 
 ### 3.20 Video playback
 
-`.mods` MobiClip files (46, 108 MiB) played by ov024 (C++ decoder calling ARM assembly
-kernels) and ov012 (opening). `libs/mobiclip/video/portable/` already contains a portable C++
-frame decoder (`docs/MOBICLIP_DECODER.md`). PS2 plan: evaluate the portable decoder on the EE
-(256×192 at 15–24 fps is small); if too slow, pre-convert offline to PS2 MPEG-2 (IPU decode via
-`libmpeg`). Until then the player is a **clearly logged temporary skip** that reports "movie
-finished" so scenes proceed. Cutscenes are not removed.
+`.mods` MobiClip files (46, 108 MiB; 256x160 at 14.985 fps, IMA-ADPCM audio at 22050 or
+32728 Hz) played by ov024's player, used by ov012 (opening) and the movie scenes.  **The game's
+own player runs** (decompiled C/C++: container, streaming reads, frame alarm, ADPCM audio into
+two looping PCM16 channels, subtitles, display setup).  Only its ARM parts are replaced, by
+overrides in `ps2/overrides/overlays/`:
+* `Ov024_MobiClip_GetDecoderCodeCached` returns `MobiClip_DecodeFrameCore`, the portable C++ frame
+  decoder (`libs/mobiclip/video/portable`, library `kh_mobiclip`; `docs/MOBICLIP_DECODER.md`)
+  instead of copying the ARM payload to ITCM - same state, same planes;
+* `Ov024_MobiClip_BlitRows` - the YCoCg->RGB555 conversion (with its checkerboard dither) in C;
+* `Ov024_TickStreamSlots` - the original plus the VBlank the DS would take while the opening scene
+  spins on it: while a slot can decode ahead, a passed VBlank is serviced without waiting
+  (`kh_nitro_poll_vblank`); with nothing to decode the frame is presented and the next VBlank
+  waited for.
+The player double-buffers on the display: frames alternate between the BG3 direct-colour bitmap
+and a 4x3 grid of 64x64 bitmap OBJs, flipped by DISPCNT in its VBlank task (which checks VCOUNT:
+it reads line 192 while the VBlank handler runs).  The FastAudio and transform audio codecs and
+the deblocking filter stay ARM-only: KH Days' movies use none of them.  Verified in PCSX2: the
+opening and the first field movie (818.mods plays its 108.0 s in 108 s), Start skips.
 
 ### 3.21 Wireless / networking
 
@@ -415,7 +535,10 @@ replacements reproduce the hardware results bit-exactly (64/32 signed division, 
 | sources re-declare SDK names with different types | everywhere | `-fno-builtin`, no SDK headers force-included |
 | `asm { clz }` (5 functions) | MsgQueue, PartyState, ov002, ov003 | overrides using a `clz` with ARM semantics (clz(0)=32) |
 | **per-file prototypes returning `long long` vs `int` for the same function** (`_s32_div_f`/`func_02020400` returns quotient in r0 and remainder in r1; files read it as `int` or as `long long`) | ~300 files | n32 returns 64-bit values in one register and `int` callers use the full register, so one symbol cannot serve both: the PS2 source-prep step (`ps2/tools/prep_sources.py`) renames the callee per declared type |
-| `long long`/`double` alignment 8 on MIPS | rare structs | static asserts in overrides where layouts cross the DS data boundary |
+| `long long`/`double` members are 8-aligned on MIPS, 4-aligned by mwcc | game structs (ov002's gauge context grew 0x188 → 0x1a0 and overran its DS-sized heap block) | game code is built with `-fpack-struct=4`; SDK structs the PS2 layer shares with it use a 4-aligned 64-bit typedef (`OSTick`) |
+| EE gcc raises arrays and structs to 8-byte alignment | data tables traversed across objects | R13/R17 cap them at their type's own alignment |
+| DS varargs: a variadic function hands `&last_named` on as a pointer to the argument block | `Text_FormatUtf16`, projectile Fire functions, ... | R14 rebuilds the block from `va_arg` |
+| zero-initialised globals repeated in several files become COMMON and lose their DS placement | NitroSDK SND command manager, OS thread block, ... | gen_link.py pins COMMON symbols at their DS `.bss` offsets |
 | ARM assembly in libs (`asm_stubs`: MSL runtime, SDK hand-written routines) | libs only | re-implemented in C at the API boundary; no ARM interpreter |
 | mwcc array assignment | Ov252_PlaceBodyParts | override |
 | DS Protect (ov028) | anti-tamper | excluded; its callers overridden |
@@ -445,6 +568,11 @@ Every rule is listed in the tool; the important ones:
 | R6 | packed-pointer decode base `0x01ff8000` → `KH_DS_PACKED_PTR_BASE` | handles keep 24 bits of a heap pointer; valid because the ELF + game arena stay below 16 MiB |
 | R7 | drop an `extern` prototype of a function the file defines `static` | mwcc accepts it, gcc does not |
 | R8 | stores/reads of geometry-engine registers → `kh_ge_port_write1/read` | 3D commands must reach the geometry front end in order, word by word |
+| R13 | 4-byte alignment for named address-coupled arrays (ov008 camp-menu `.bss`) | EE gcc's 8-byte array alignment opened gaps |
+| R14 | variadic functions taking `&last_named`: the DS argument block is rebuilt from `va_arg` | on the EE variadic arguments are in registers |
+| R15 | literal ITCM addresses of data embedded in ITCM code → PS2 definitions (`nitro_itcm_data.c`) | 0x01ff8000-0x01ffffff is the top of EE RAM (G3D texture-matrix builder tables) |
+| R16 | R8 for pointer variables aimed at geometry registers (`p->field = v`, `*p = v`) | NODEMIX drove MTX_MODE/STORE/RESTORE this way; skinned models used wrong matrices |
+| R17 | every definition in a DS pure-data file gets its type's own alignment | the link places these objects at their DS-relative addresses (5.5) |
 
 `build/ps2/hw_semantic.txt` lists every source touching a register with side effects;
 `ps2/config/semantic_ok.txt` records the reviewed ones that are correct as prepared.
@@ -494,7 +622,85 @@ dependencies still blocking a complete port.
   C definitions win), one section per module;
 * `OVERLAY_<n>_ID` absolute symbols (the SDK's overlay-id idiom) and per-overlay `.bss` ranges for
   `FS_LoadOverlay`;
-* aliases for data labels that point inside a larger C object.
+* aliases for data labels that point inside a larger C object;
+* COMMON symbols (R10's merged zero-initialised globals) get a strong label at their DS `.bss`
+  offset; names absent from `symbols.txt` take it from the `khdays: shared-bss` block that
+  declares them (mwcc order: reverse declaration order, last declaration appended);
+* the objects of every DS pure-data file (`delinks.txt` entry without `.text`) are placed at their
+  addresses relative to the module's first data file: game code reaches neighbouring objects
+  across file boundaries (ov002 writes a caption's screen base through `data_ov002_0207ebf4`
+  into `data_ov002_0207ec00`). An object larger than its DS range stops the link
+  ("cannot move location counter backwards"); `ps2/tools/check_data_layout.py` lists all of them
+  at once.
+
+### 5.7 Bring-up diagnostics
+
+* `KH_PS2_DEBUG` is off by default. Set it for a diagnostic build with
+  `KH_PS2_DEBUG=1 ./build-ps2.sh`; this also enables `KH_PS2_PROFILE`, INFO/debug logging,
+  periodic performance reports, heap walks after every allocation/free and VBlank, and periodic
+  object-state logs. Warnings, errors and panic diagnostics remain in normal builds.
+* `nitro_heapdbg.c` wraps `NNS_FndAllocFromExpHeapEx` / `NNS_FndFreeToExpHeap` (`--wrap`):
+  frees of blocks a heap does not hold are logged and dropped (always); with `KH_PS2_DEBUG`,
+  after every operation and every VBlank both game heaps are checked (signatures, links,
+  overlaps) and the first corruption is reported with the operations around it; heap usage is
+  logged every 1200 VBlanks and at `OS_Terminate`.
+* `OS_Terminate` logs its caller. A jump to address 0 shows in PCSX2's log as `TLB Miss, pc=0x0`:
+  break on 0x0 in the debugger and read `$ra`.
+* `G2_GetBG*Ptr` for an unmapped VRAM window returns a scratch sink (logged) instead of NULL: a
+  NULL base turned tilemap writes into stores to EE kernel RAM (below 0x80000).
+* Threads: the DS game thread sleeps once per frame in `OS_WaitVBlankIntr`, which is what lets
+  the lower-priority DS threads (file loader, sound stream, save) run. `kh_vblank_wait` therefore
+  drains every pending VBlank signal before `WaitSema`: the EE kernel does not clamp a semaphore
+  to `max_count`, and with frames longer than one VBlank a single `PollSema` left the game thread
+  never blocking (the loader starved, field loads queued forever). Symptom: a DS thread `READY`
+  in `pcsx2_get_threads` that never runs.
+* `OSi_VBlankInterruptHandler` is the game's own VBlank handler despite its SDK-style name
+  (master brightness commit + the `RegisterNamedTask` VBlank task list, e.g. ov002's BGUIVBFUNC
+  that drives caption fades); `ps2/overrides/nitro/` compiles it, and `run_vblank` calls it at
+  thread level. A stub there froze the first field tutorial (caption fade tween never sampled).
+* `ps2/tools/win/`: `run_pcsx2.sh`, `pcsx2_shot.ps1` (screenshot), `pcsx2_key.ps1` (key presses),
+  `pcsx2_newgame.sh` / `pcsx2_to_story.sh` (drive the title menu to a New Game / the first story
+  scene, waiting on log markers), `pcsx2_to_field.sh` / `pcsx2_to_mission.sh ... start` (the two
+  benchmark scenes), `pcsx2_sample.py` (statistical EE profiler over the DebugServer: random
+  pauses + stack walks -> self/inclusive time per function), `ds2d_dump.py` / `ds2d_bgdump.py`
+  (live DS 2D registers, OAM, BG screen entries and palettes over PINE), `pine_poke.py` (write
+  a variable by symbol, e.g. `kh_ge_dbg_skip` to hide triangles by texture format / pass).
+
+### 5.8 Performance
+
+The profiler (`ps2/src/platform/ps2_prof.c`) times exclusive zones with the cp0 Count register
+and logs every 120 frames in a `KH_PS2_DEBUG=1` diagnostic build. It is compiled out of the normal
+build:
+
+```
+[perf] 33.4ms (max 33.4) 30.0fps | game 1.9 ge 14.4 r3d 1.5 tex 0.0 r2d 2.7 gsw 0.4 vbl 12.3 ...
+[perf] vtx 6040 poly 1839 cull 175 clip 10 off 32 tri 2752 draw 4 texbind 61 miss 0 stale 0 |
+       upload 102 (210 KB) clut 6 gif 195 KB spr 4768 shadow 5
+```
+
+game = game update without the zones inside it; ge = geometry front end; r3d = 3D packet
+building (VU1 headers, texture binds); r2d = 2D compositor; gsw = waiting for the GS; vbl =
+sleeping until VBlank (headroom); tri = triangles to the GS; gif = frame packet size.
+
+Measured in PCSX2 (EE cycle counts; real hardware will differ, chiefly in cache behaviour):
+
+| scene | baseline (session start) | now |
+|---|---|---|
+| Mission 00 (Sandlot, enemies) | 83.4 ms, 12 fps: GE 41.2, 2D 19.0, debug 1.8 | 33.4 ms (30 fps cap), GE 6.6, r3d 0.7, 2D 2.8, 22 ms idle |
+| Grey Area field | 33.4 ms with ~4 ms to spare: GE 17.0, r3d 7.8, 2D 3.0 | 33.4 ms, GE 14.4, r3d 1.5, 2D 2.7, 12 ms idle |
+
+The main loop (`kh_game_main`) caps the game at 30 fps in its 60 Hz mode, as on the DS: one
+VBlank wait at the top of the loop and the pacing wait for the next one.  What changed:
+* EE vertex transform: the 64-bit fixed-point products went through soft-float `__floatdisf` per
+  coordinate -> VU0 macro-mode transform; DS matrix products use MULT/MADD (exact DS precision);
+* 3D GIF packets built per vertex on the EE -> VU1 microprogram, vertices DMA'd by reference;
+* clipping: guard band (x/y) + divide-free culling; packed-command decoder without copies;
+* 2D: text BGs were walked 16 times (once per palette) with two divisions per entry -> one pass;
+* `fps %.1f` on screen pulled soft double printf every frame -> integer formatting;
+* VBlanks that pass while a frame is computed are delivered when the game next reads its VBlank
+  counter (`VBlank_GetCount`), as the DS IRQ would - pacing no longer adds a VBlank to frames
+  that overran one;
+* heap checking after every allocation/free and VBlank is a `KH_PS2_DEBUG` feature.
 
 ### 5.6 The ARM7
 
@@ -530,22 +736,22 @@ ps2data/                     user-generated game data (git-ignored, never commit
 | # | Milestone | Status |
 |---|---|---|
 | 1 | Architecture audit, this document | done (living document) |
-| 2 | PS2BUILD project, minimal ELF, serial/stdout log | in progress |
-| 3 | Platform layer: memory diagnostics, timing/VBlank, VFS + boot path, pad, GS clear | in progress |
-| 4 | Link the game: generated BSS/data layouts, overlay IDs, SDK replacement stubs that log | pending |
-| 5 | `main()` runs: heaps, task system, scene 1 constructed | pending |
-| 6 | 2D compositor: title screen BGs/OAM | pending |
-| 7 | Geometry front end + GS back end: first G3D model | pending |
-| 8 | Title/menus, new game | pending |
-| 9 | Field scene, player + camera, combat | pending |
+| 2 | PS2BUILD project, minimal ELF, serial/stdout log | done |
+| 3 | Platform layer: memory diagnostics, timing/VBlank, VFS + boot path, pad, GS clear | done |
+| 4 | Link the game: generated BSS/data layouts, overlay IDs, SDK replacement stubs that log | done |
+| 5 | `main()` runs: heaps, task system, scene 1 constructed | done |
+| 6 | 2D compositor: title screen BGs/OAM | done: text/affine/extended/bitmap BGs, affine OBJ, windows, blending, brightness, display capture; OBJ window, mosaic, ext palettes pending |
+| 7 | Geometry front end + GS back end: first G3D model | done (skinned characters, textured rooms) |
+| 8 | Title/menus, new game | done (PCSX2): title, Story Mode, difficulty, opening movies (virtual clock) |
+| 9 | Field scene, player + camera, combat | in progress (PCSX2): story scenes, Grey Area field with HUD, tutorial captions, player movement and camera; NPC talk, missions and combat next |
 | 10 | Audio (SDAT sequencer + SPU2) | pending |
 | 11 | Memory-card saves | pending |
 | 12 | MobiClip playback | pending |
-| 13 | VU1 path, pre-converted models, profiling-driven optimisation | pending |
+| 13 | VU1 path, pre-converted models, profiling-driven optimisation | VU1 projection/GIF path, VU0 transform, profiler done (5.8); pre-converted models pending |
 
 ## 8. Open questions
 
-* US vs EU assets: confirm every path the EU code builds exists in the US ROM (log misses in
-  the VFS); confirm pack/model formats are identical between regions.
 * Duplicate player/enemy overlays: link once and alias, or keep separate (only RAM at stake).
 * Polygon-ID based translucency and edge marking on GS.
+* Game Over (ov027) puts the 3D layer in front of its 2D background (BG0 priority 0); fixed by
+  drawing the 3D layer at BG0's priority, not yet seen on screen (needs a death in play).

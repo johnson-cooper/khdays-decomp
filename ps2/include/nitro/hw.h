@@ -149,5 +149,9 @@ volatile void *kh_cp_sqrtcnt_ptr(void);
 #define REG_DB_BG2CNT_ADDR ((unsigned int)kh_ds_io + 0x100c)   /* 0x0400100c */
 #undef REG_DB_BG3CNT_ADDR
 #define REG_DB_BG3CNT_ADDR ((unsigned int)kh_ds_io + 0x100e)   /* 0x0400100e */
+#undef HW_BG_PLTT
+#define HW_BG_PLTT ((void *)((unsigned int)kh_ds_pal + 0x0))   /* 0x05000000 */
+#undef HW_DB_BG_PLTT
+#define HW_DB_BG_PLTT ((void *)((unsigned int)kh_ds_pal + 0x400))   /* 0x05000400 */
 
 #endif

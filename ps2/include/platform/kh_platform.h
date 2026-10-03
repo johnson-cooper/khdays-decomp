@@ -10,12 +10,17 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "platform/kh_prof.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* ---------------------------------------------------------------- logging */
+
+/* Keep synchronous, line-by-line boot-device diagnostics only through early title init.  Longer
+ * tracing is ruinously expensive on real USB/FAT devices and can starve audio on the IOP. */
+#define KH_BOOT_TRACE_VBLANKS 180u
 
 enum { KH_LOG_ERROR = 0, KH_LOG_WARN = 1, KH_LOG_INFO = 2, KH_LOG_DEBUG = 3, KH_LOG_TRACE = 4 };
 
@@ -27,8 +32,13 @@ void kh_panic(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2
 
 #define KH_ERR(sub, ...)   kh_log(KH_LOG_ERROR, sub, __VA_ARGS__)
 #define KH_WARN(sub, ...)  kh_log(KH_LOG_WARN, sub, __VA_ARGS__)
+#if KH_PS2_DEBUG
 #define KH_INFO(sub, ...)  kh_log(KH_LOG_INFO, sub, __VA_ARGS__)
 #define KH_DBG(sub, ...)   kh_log(KH_LOG_DEBUG, sub, __VA_ARGS__)
+#else
+#define KH_INFO(sub, ...)  ((void)0)
+#define KH_DBG(sub, ...)   ((void)0)
+#endif
 
 /* Logs "<what> not implemented on PS2" once per call site. */
 #define KH_UNIMPLEMENTED_ONCE(what) do { static int kh__once; if (!kh__once) { kh__once = 1; \
@@ -116,7 +126,7 @@ int32_t  kh_file_write(KhFile *f, const void *src, uint32_t size);
 int32_t  kh_file_seek(KhFile *f, uint32_t pos);
 uint32_t kh_file_tell(KhFile *f);
 uint32_t kh_file_size(KhFile *f);
-void     kh_file_close(KhFile *f);
+int      kh_file_close(KhFile *f);   /* 0, or <0 if a write-back failed */
 int      kh_file_exists(const char *path);
 int      kh_file_rename(const char *from, const char *to);
 int      kh_file_remove(const char *path);
@@ -161,32 +171,39 @@ void kh_video_debug_text(int x, int y, uint32_t rgb, const char *fmt, ...) __att
 
 int  kh_audio_init(void);
 void kh_audio_update(void);
+/* starts the audio thread: render() is called for each chunk of 48 kHz 16-bit stereo */
+void kh_audio_start(void (*render)(int16_t *stereo, int frames));
 
 /* -------------------------------------------------------------- profiling */
-
-typedef enum KhProfZone {
-    KH_PROF_FRAME = 0, KH_PROF_UPDATE, KH_PROF_RENDER_SUBMIT, KH_PROF_GS_WAIT,
-    KH_PROF_LOAD, KH_PROF_AUDIO, KH_PROF_COUNT
-} KhProfZone;
 
 typedef struct KhProfStats {
     float    fps;
     uint32_t zone_us[KH_PROF_COUNT];  /* last frame */
-    uint32_t draw_calls, triangles, vertices, tex_uploads, tex_upload_bytes;
+    uint32_t count[KH_PC_COUNT];      /* last frame */
 } KhProfStats;
 
-void kh_prof_begin(KhProfZone z);
-void kh_prof_end(KhProfZone z);
 void kh_prof_frame(void);                     /* closes a frame */
-void kh_prof_count(uint32_t draw_calls, uint32_t tris, uint32_t verts);
 void kh_prof_tex_upload(uint32_t bytes);
 const KhProfStats *kh_prof_stats(void);
+extern uint32_t kh_prof_counters[KH_PC_COUNT];
+#if KH_PS2_PROFILE
+#define KH_PROF_ADD(c, n) (kh_prof_counters[c] += (uint32_t)(n))
+#else
+#define KH_PROF_ADD(c, n) ((void)0)
+#endif
 
 /* ---------------------------------------------------------- platform init */
 
 /* Brings the whole platform up in dependency order; panics with a readable message on failure. */
 void kh_platform_init(int argc, char **argv);
 void kh_platform_shutdown(void);
+void kh_platform_restart(void);
+/* Waits on the IOP or on the VBlank interrupt need EE interrupts: game code calls into the
+ * platform from inside OS_DisableInterrupts() sections (which disable every EE interrupt), and a
+ * thread that blocks there waits for a completion interrupt that can never come.  kh_io_begin()
+ * enables interrupts if they were off and returns 1 then; kh_io_end() restores. */
+int  kh_io_begin(void);
+void kh_io_end(int was_off);       /* execute this ELF again (DS soft reset) */
 
 #ifdef __cplusplus
 }

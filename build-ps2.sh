@@ -1,8 +1,9 @@
 #!/bin/sh
 # Build the native PlayStation 2 port with PS2BUILD.
 #
-#   ./build-ps2.sh            regenerate the generated parts, build everything
-#   ./build-ps2.sh --quick    skip regeneration (same as plain `ps2build build`)
+#   ./build-ps2.sh                         normal build (debug logs/profiler off)
+#   KH_PS2_DEBUG=1 ./build-ps2.sh          diagnostic build (logs/profiler/checks on)
+#   ./build-ps2.sh --quick                 skip regeneration (same as plain `ps2build build`)
 #
 # Output: build/bin/khdays-ps2.elf (the game) and build/bin/khdays-platform-test.elf.
 # Game data is prepared separately, from your own ROM: see docs/PS2_PORT.md ("Game data").
@@ -38,9 +39,32 @@ if [ "${1:-}" != "--quick" ]; then
     SDK=$(dirname "$(command -v ps2build)")
     NINJA="$SDK/tools/ninja"
     [ -x "$NINJA" ] || [ -x "$NINJA.exe" ] || NINJA=ninja
+    # PS2BUILD's archive rule uses `ar rcs`, which updates an existing archive but does not
+    # remove members whose source was excluded since the previous generation.  Recreate just
+    # the generated game archives so their membership exactly matches ps2.yaml; compiled
+    # objects remain cached, so this is cheap compared with a clean rebuild.
+    rm -f build/lib/libkh_*.a
     TARGETS=$(sed -n 's/^  - name: \(kh_[A-Za-z0-9_]*\)$/\1/p' ps2.yaml)
     # shellcheck disable=SC2086
-    "$NINJA" -k 0 -C build $TARGETS || die "compiling the game archives failed (errors above)"
+    # On Windows `ar` occasionally fails with "could not create temporary file ... Permission
+    # denied" while a scanner holds the directory.  The failed step leaves an empty archive newer
+    # than its inputs, which ninja would then consider up to date (silently dropping that
+    # overlay's code or data), so delete exactly the outputs that failed and run once more; a
+    # genuine compile error fails the second pass too.
+    NINJA_LOG=build/ninja_archives.log
+    # shellcheck disable=SC2086
+    "$NINJA" -k 0 -C build $TARGETS 2>&1 | tee "$NINJA_LOG"
+    if grep -q '^FAILED: ' "$NINJA_LOG"; then
+        FAILED=$(sed -n 's/^FAILED: \(\[code=[0-9-]*\] \)\{0,1\}\(lib\/[^ ]*\.a\).*/\2/p' "$NINJA_LOG")
+        echo "build-ps2.sh: retrying failed steps once:" $FAILED
+        for a in $FAILED; do rm -f "build/$a"; done
+        # shellcheck disable=SC2086
+        "$NINJA" -k 0 -C build $TARGETS || die "compiling the game archives failed (errors above)"
+    fi
+    # an archive holding no members means a lost step, never a legitimately empty module
+    for a in build/lib/libkh_*.a; do
+        [ "$(wc -c < "$a")" -gt 8 ] || die "$a is empty (a failed archive step?); delete it and rebuild"
+    done
     echo "== [4/5] generating link glue"
     "$PY" ps2/tools/gen_link.py || die "gen_link.py failed"
 fi

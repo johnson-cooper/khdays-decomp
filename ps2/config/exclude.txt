@@ -5,10 +5,6 @@
 # (Ov001_CreateMainAndSubHeaps, ...) are overridden.
 src/overlays/system/ov028_dsprotect/
 
-# MobiClip player: C++ over ARM assembly kernels.  Video is a logged temporary skip until the
-# portable decoder (libs/mobiclip/video/portable) is brought up - see docs/PS2_PORT.md 3.20.
-src/overlays/system/ov024_mobiclip/
-
 # Library assembly never runs on the EE.
 asm_stubs/
 

@@ -166,6 +166,7 @@ void kh_mem_get_stats(KhMemStats *o)
 
 void kh_mem_report(void)
 {
+#if KH_PS2_DEBUG
     static const char *const cat_name[KH_MEM_COUNT] = {
         "misc", "game-heap", "texture", "geometry", "animation", "resource", "audio", "file-cache", "render"
     };
@@ -184,4 +185,5 @@ void kh_mem_report(void)
         KH_INFO("mem", "  arena %-9s %6u / %6u KiB (peak %u)", life_name[i], s.life_used[i] / KB,
                 s.life_cap[i] / KB, g_arena[i].peak / KB);
     KH_INFO("mem", "GS VRAM: %u / %u KiB", s.gs_vram_used / KB, s.gs_vram_total / KB);
+#endif
 }

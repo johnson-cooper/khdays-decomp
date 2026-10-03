@@ -187,7 +187,42 @@ data_0204472c:
     .type data_02044730, @object
 data_02044730:
     .space 0x18
-    .space 0x24
+    .globl data_02044748
+    .type data_02044748, @object
+data_02044748:
+    .space 0x4
+    .globl sFinishedTag
+    .type sFinishedTag, @object
+sFinishedTag:
+    .space 0x4
+    .globl sReserveList
+    .type sReserveList, @object
+sReserveList:
+    .space 0x4
+    .globl sReserveListEnd
+    .type sReserveListEnd, @object
+sReserveListEnd:
+    .space 0x4
+    .globl sFreeListEnd
+    .type sFreeListEnd, @object
+sFreeListEnd:
+    .space 0x4
+    .globl sWaitingCommandListQueueRead
+    .type sWaitingCommandListQueueRead, @object
+sWaitingCommandListQueueRead:
+    .space 0x4
+    .globl sWaitingCommandListQueueWrite
+    .type sWaitingCommandListQueueWrite, @object
+sWaitingCommandListQueueWrite:
+    .space 0x4
+    .globl sWaitingCommandListCount
+    .type sWaitingCommandListCount, @object
+sWaitingCommandListCount:
+    .space 0x4
+    .globl sCurrentTag
+    .type sCurrentTag, @object
+sCurrentTag:
+    .space 0x4
     .weak data_0204476c
     .type data_0204476c, @object
 data_0204476c:
@@ -491,7 +526,18 @@ data_0204a2e4:
     .type data_0204a2f0, @object
 data_0204a2f0:
     .space 0xc
-    .space 0xc
+    .globl data_0204a2fc
+    .type data_0204a2fc, @object
+data_0204a2fc:
+    .space 0x4
+    .globl sAlarmLock
+    .type sAlarmLock, @object
+sAlarmLock:
+    .space 0x4
+    .globl sChannelLock
+    .type sChannelLock, @object
+sChannelLock:
+    .space 0x4
     .weak data_0204a308
     .type data_0204a308, @object
 data_0204a308:
@@ -520,6 +566,9 @@ data_0204a778:
     .type data_0204a77c, @object
 data_0204a77c:
     .space 0x464
+    .globl data_0204abe0
+    .type data_0204abe0, @object
+data_0204abe0:
     .space 0x4
     .weak data_0204abe4
     .type data_0204abe4, @object
@@ -533,6 +582,9 @@ data_0204abf0:
     .type data_0204ac30, @object
 data_0204ac30:
     .space 0x80
+    .globl data_0204acb0
+    .type data_0204acb0, @object
+data_0204acb0:
     .space 0x8
     .weak data_0204acb8
     .type data_0204acb8, @object
@@ -542,12 +594,26 @@ data_0204acb8:
     .type data_0204acf8, @object
 data_0204acf8:
     .space 0x54
+    .globl data_0204ad4c
+    .type data_0204ad4c, @object
+data_0204ad4c:
     .space 0x4
     .weak data_0204ad50
     .type data_0204ad50, @object
 data_0204ad50:
     .space 0x3c
-    .space 0xc
+    .globl data_0204ad8c
+    .type data_0204ad8c, @object
+data_0204ad8c:
+    .space 0x4
+    .globl sPrepareThread
+    .type sPrepareThread, @object
+sPrepareThread:
+    .space 0x4
+    .globl sDecodeBuffer
+    .type sDecodeBuffer, @object
+sDecodeBuffer:
+    .space 0x4
     .weak data_0204ad98
     .type data_0204ad98, @object
 data_0204ad98:

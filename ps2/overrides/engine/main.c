@@ -13,6 +13,7 @@
 #include "nitro/types.h"
 
 #include "game/scene.h"
+#include "platform/kh_prof.h"
 typedef u32 FSOverlayID;
 
 extern u32 OVERLAY_1_ID[1];
@@ -118,6 +119,7 @@ void kh_game_main(void) {
     for (;;) {
         OS_WaitVBlankIntr();
         frameTarget = VBlank_GetCount();
+        kh_prof_begin(KH_PROF_GAME);
         FrameStep_UpdateTaskQueue();
         Pad_Sample();
         G3X_ResetMtxStack();
@@ -127,22 +129,28 @@ void kh_game_main(void) {
         case 1: Callbacks_Run(1); frameTarget = VBlank_GetCount(); break;
         case 2: Obj_UpdateAll(0); Callbacks_Run(1); break;
         }
+        kh_prof_end(KH_PROF_GAME);
+        kh_prof_begin(KH_PROF_SOUND);
         SoundMgr_Update();
+        kh_prof_end(KH_PROF_SOUND);
 
         /* frame-rate pacing: advance whole frames until we reach the target */
         if (gObjSystem != 2) {
             frameTarget += (gObjSystem == 1) ? 2 : 1;
             while (VBlank_GetCount() < frameTarget) {
                 OS_WaitVBlankIntr();
+                kh_prof_begin(KH_PROF_GAME);
                 FrameStep_UpdateTaskQueue();
+                kh_prof_end(KH_PROF_GAME);
             }
         }
 
-        /* present (unless mode 1 already did its own swap) */
-        if (gPauseMode != 1) {
-            KhNitro_PresentFrame();
+        /* present: also in pause mode 1 (the cutscene pause menu), where the 3D scene is frozen -
+         * the DS keeps displaying both screens, with the last 3D frame (nitro_ge.c keeps it while
+         * no SWAP_BUFFERS arrives) and the pause menu's 2D */
+        KhNitro_PresentFrame();
+        if (gPauseMode != 1)
             data_0204c215 = 1;
-        }
 
         /* scene poll: on the DS the rest of this block is lid-close / sleep handling */
         (void)Game_PollSceneAlive();

@@ -9,8 +9,9 @@
 
 /* game/other */
 KH_AUTO_STUB(ARM9_CTOR_START)
-KH_AUTO_STUB(ee_dbg_install)
-KH_AUTO_STUB(ee_dbg_set_level1_handler)
+
+/* mobiclip/audio */
+KH_AUTO_STUB(Ov024_MobiClip_AudioTransformDecode)
 
 /* nitro/card */
 KH_AUTO_STUB(CARDi_ReadRom)
@@ -21,9 +22,8 @@ KH_AUTO_STUB(CTRDGi_IsAgbCartridgeAtInit)
 /* nitro/dgt */
 KH_AUTO_STUB(DGTi_Hash2ProcessBlock)
 
-/* nitro/gx */
-KH_AUTO_STUB(G3X_GetClipMtx)
-KH_AUTO_STUB(G3X_GetVectorMtx)
+/* nitro/init */
+KH_AUTO_STUB(OSi_ReferSymbol)
 
 /* nitro/mi */
 KH_AUTO_STUB(MIi_CheckAnotherAutoDMA)
@@ -35,7 +35,6 @@ KH_AUTO_STUB(func_01ff85d0)
 KH_AUTO_STUB(OS_ReadOwnerOfLockWord)
 KH_AUTO_STUB(OS_SetDPermissionsForProtectionRegion)
 KH_AUTO_STUB(OS_UnLockCartridge)
-KH_AUTO_STUB(OSi_DestroyThread)
 KH_AUTO_STUB(OSi_EnterDmaCallback)
 KH_AUTO_STUB(WaitByLoop)
 
@@ -45,10 +44,9 @@ KH_AUTO_STUB(PM_DeletePostSleepCallback)
 KH_AUTO_STUB(PM_DeletePreSleepCallback)
 KH_AUTO_STUB(PM_PrependPreSleepCallback)
 
-/* nns/g2d */
-KH_AUTO_STUB(LoadBGCharacter)
-
 /* undefined data symbols with no C definition: zero storage (contents unknown!) */
 unsigned char data_020422b4[64] __attribute__((aligned(16)));   /* main 0x020422b4 */
 unsigned char data_020422b8[64] __attribute__((aligned(16)));   /* main 0x020422b8 */
 unsigned char data_ov107_020cb628[64] __attribute__((aligned(16)));   /* ov107 0x020cb628 */
+unsigned char func_ov024_02087318_unk[64] __attribute__((aligned(16)));   /* ov024 0x02087318 */
+unsigned char func_ov024_02092e60_unk[64] __attribute__((aligned(16)));   /* ov024 0x02092e60 */

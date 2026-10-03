@@ -14,7 +14,7 @@ void G3X_InitMtxStack(void) {
     int levelPV;
     int levelPJ;
 
-    *gxstat = *gxstat | 0x8000;
+    kh_ge_port_write1(0x600, (unsigned int)(*gxstat | 0x8000));
 
     while (G3X_GetMtxStackLevelPV(&levelPV) != 0) {}
     while (G3X_GetMtxStackLevelPJ(&levelPJ) != 0) {}

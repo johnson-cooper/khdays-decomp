@@ -1,0 +1,82 @@
+.vu
+# VU1 microprogram: DS-geometry triangles (clip space) -> GS triangles (PATH1).
+#
+# The EE geometry front end (ps2/src/nitro/nitro_ge.c) transforms, lights, culls and clips the
+# DS polygons and keeps the resulting triangles in clip space, three qwords per vertex:
+#   +0  x y z w          clip-space position (float)
+#   +1  s t 1 -          texture coordinates in texels (float)
+#   +2  r g b a          colour 0..255, alpha 0..0x80 (int)
+# Batches of those vertices are sent by VIF1 UNPACK (V4-32, TOPS-relative, double-buffered by
+# BASE/OFFSET) right behind a 6-qword header, then started with MSCAL.  For each vertex this
+# program does the perspective divide, the viewport/screen mapping and the 24-bit Z mapping,
+# ST * q, the colour scale, and writes the GIF PACKED data (ST, RGBAQ, XYZ2) after the header's
+# GIF tag in its own output area, which it XGKICKs.
+#
+# Buffer (relative to TOP, 512 qwords per buffer):
+#   0   GIF tag (PACKED, NREG 3: ST RGBAQ XYZ2, NLOOP = vertex count, EOP)
+#   1   x = vertex count (int)
+#   2   texture scale   1/tw 1/th 1 0
+#   3   colour scale    cr cg cb ca
+#   4   screen scale    sx sy sz 0
+#   5   screen offset   ox oy oz zmax
+#   6   vertices, 3 qwords each (at most 84)
+#   258 output: GIF tag, then 3 qwords per vertex
+# The output area of a buffer is only rewritten two batches later, after XGKICK of the batch in
+# between has started - which waits for this buffer's transfer to finish - so the VIF can unpack
+# the next batch while the GS still reads this one.
+
+        .align 4
+        .global kh_vu1_tri_start
+        .global kh_vu1_tri_end
+
+kh_vu1_tri_start:
+        nop                             xtop vi01
+        nop                             iaddiu vi04, vi01, 258
+        nop                             lq.xyzw vf01, 0(vi01)
+        nop                             ilw.x vi02, 1(vi01)
+        nop                             lq.xyzw vf02, 2(vi01)
+        nop                             lq.xyzw vf03, 3(vi01)
+        nop                             lq.xyzw vf04, 4(vi01)
+        nop                             lq.xyzw vf05, 5(vi01)
+        nop                             iaddiu vi03, vi01, 6
+        nop                             sq.xyzw vf01, 0(vi04)
+        nop                             iaddiu vi05, vi04, 1
+        nop                             nop
+        nop                             ibeq vi02, vi00, done
+        nop                             nop
+
+vertex:
+        nop                             lq.xyzw vf06, 0(vi03)
+        nop                             lq.xyzw vf07, 1(vi03)
+        nop                             lq.xyzw vf08, 2(vi03)
+        nop                             div q, vf00w, vf06w
+        mul.xyz vf10, vf07, vf02        nop
+        itof0.xyzw vf12, vf08           nop
+        sub.w vf11, vf00, vf00          nop
+        mul.xyzw vf12, vf12, vf03       waitq
+        mulq.xyz vf09, vf06, q          nop
+        mulq.xyz vf10, vf10, q          nop
+        mula.xyz acc, vf09, vf04        nop
+        maddw.xyz vf09, vf05, vf00w     nop
+        ftoi0.xyzw vf12, vf12           nop
+        max.z vf09, vf09, vf00          nop
+        miniw.z vf09, vf09, vf05w       nop
+        ftoi4.xy vf11, vf09             nop
+        ftoi0.z vf11, vf09              nop
+        nop                             sq.xyzw vf10, 0(vi05)
+        nop                             sq.xyzw vf12, 1(vi05)
+        nop                             sq.xyzw vf11, 2(vi05)
+        nop                             iaddi vi02, vi02, -1
+        nop                             iaddiu vi03, vi03, 3
+        nop                             iaddiu vi05, vi05, 3
+        nop                             nop
+        nop                             ibne vi02, vi00, vertex
+        nop                             nop
+
+done:
+        nop                             xgkick vi04
+        nop[e]                          nop
+        nop                             nop
+
+        .align 4
+kh_vu1_tri_end:

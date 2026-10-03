@@ -1,0 +1,66 @@
+/* PS2: mechanically prepared copy of src/engine/data/main_tables_02042124.c (ps2/tools/prep_sources.py). Do not edit. */
+/* main .rodata 0x02042124-0x02042288: script-slot kinds, party reward/skill tables, the key-repeat
+ * key tables and the six signed unit axes. */
+
+#include "nitro/types.h"
+#include "nitro/fx_types.h"
+
+#define PAD_BUTTON_A      0x0001
+#define PAD_BUTTON_B      0x0002
+#define PAD_KEY_RIGHT     0x0010
+#define PAD_KEY_LEFT      0x0020
+#define PAD_KEY_UP        0x0040
+#define PAD_KEY_DOWN      0x0080
+#define PAD_BUTTON_R      0x0100
+#define PAD_BUTTON_L      0x0200
+#define PAD_BUTTON_X      0x0400
+#define PAD_BUTTON_Y      0x0800
+
+/* Kind of each of the 48 script slots (0..3, 99 = reserved), consulted by the per-frame command
+ * dispatcher SoundMgr_Update before it links two slots (kind 1 targeting kind 2). */
+const u8 data_02042124[48] __attribute__((aligned(__alignof__(u8)))) = {
+    0, 2, 1, 3, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 0,
+    1, 2, 0, 0, 3, 3, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 2, 0, 3, 0, 0, 0, 99, 0, 0, 0, 3, 0, 0, 0,
+};
+
+/* The three fixed rewards every party member gets after its growth rewards (PartyMember_RebuildDerived). */
+const struct {
+    int id[3];
+} data_02042154 __attribute__((aligned(4))) = { { 2, 3, 4 } };
+
+/* Signature skill of each character kind, set by PartyMember_Reset when a save record is reset
+ * (-1 = none). */
+const struct {
+    int skill[22];
+} data_02042160 __attribute__((aligned(4))) = { {
+    12, 7, 1, 6, 2, 12, 8, 11, 4, 9, 10, -1,
+    3, 0, 12, 5, 12, 12, 12, 12, 12, 12,
+} };
+
+/* Reward ids granted by the growth entries (PartyMember_RebuildDerived): 1..15 through StoreBytePairKeepMin,
+ * the rest through Slot_EvalPackedParamWith. */
+const struct {
+    int id[24];
+} data_020421b8 __attribute__((aligned(4))) = { {
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    21, 34, 37, 40, 88, 62, 33, 20,
+} };
+
+/* Key-repeat (KeyRepeat_Update): index of each key's press stamp in gPadPressTimes ... */
+const u16 data_02042218[10] __attribute__((aligned(__alignof__(u16)))) = { 6, 7, 5, 4, 0, 1, 10, 11, 9, 8 };
+
+/* ... and the key bit of each slot, in the same order. */
+const u16 data_0204222c[10] __attribute__((aligned(__alignof__(u16)))) = {
+    PAD_KEY_UP, PAD_KEY_DOWN, PAD_KEY_LEFT, PAD_KEY_RIGHT,
+    PAD_BUTTON_A, PAD_BUTTON_B, PAD_BUTTON_X, PAD_BUTTON_Y,
+    PAD_BUTTON_L, PAD_BUTTON_R,
+};
+
+/* Signed unit axes shared by the movement, camera and collision code. */
+const VecFx32 data_02042240 __attribute__((aligned(__alignof__(VecFx32)))) = { 0, -0x1000, 0 };     /* -Y (down) */
+const VecFx32 data_0204224c __attribute__((aligned(__alignof__(VecFx32)))) = { -0x1000, 0, 0 };     /* -X */
+const VecFx32 data_02042258 __attribute__((aligned(__alignof__(VecFx32)))) = { 0, 0, 0x1000 };      /* +Z */
+const VecFx32 data_02042264 __attribute__((aligned(__alignof__(VecFx32)))) = { 0, 0x1000, 0 };      /* +Y (up) */
+const VecFx32 data_02042270 __attribute__((aligned(__alignof__(VecFx32)))) = { 0x1000, 0, 0 };      /* +X */
+const VecFx32 data_0204227c __attribute__((aligned(__alignof__(VecFx32)))) = { 0, 0, -0x1000 };     /* -Z */

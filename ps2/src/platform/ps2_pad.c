@@ -36,6 +36,10 @@ static int8_t axis(unsigned char raw)
     return (int8_t)(v < -128 ? -128 : v > 127 ? 127 : v);
 }
 
+/* Development: buttons (KH_BTN_*) held on port 0 in addition to the pad's, written by test scripts
+ * through PCSX2 PINE (ps2/tools/win/pine_press.py) - input that does not need the window focus. */
+volatile uint32_t kh_dbg_pad_inject;
+
 void kh_input_poll(void)
 {
     int p;
@@ -65,6 +69,8 @@ void kh_input_poll(void)
         if (padRead(p, 0, &b) == 0)
             continue;
         s->held = (uint32_t)(0xffff ^ b.btns);   /* libpad bits are active low, same layout as KH_BTN_* */
+        if (p == 0)
+            s->held |= kh_dbg_pad_inject;
         s->pressed = s->held & ~prev;
         s->released = prev & ~s->held;
         if ((b.mode >> 4) == 0x7) {             /* analog data present */

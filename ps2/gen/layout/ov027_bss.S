@@ -3,7 +3,13 @@
     .balign 32
     .globl __kh_bss_start_ov027
 __kh_bss_start_ov027:
+    .globl data_ov027_02084360
+    .type data_ov027_02084360, @object
+data_ov027_02084360:
     .space 0x4
+    .globl data_ov027_02084364
+    .type data_ov027_02084364, @object
+data_ov027_02084364:
     .space 0x1c
     .globl __kh_bss_end_ov027
 __kh_bss_end_ov027:

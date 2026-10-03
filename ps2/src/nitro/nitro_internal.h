@@ -31,6 +31,16 @@ uint32_t kh_nitro_view_banks(int view);
 
 /* GS residency cache invalidation when the game reloads texture/palette VRAM (ps2/src/gfx) */
 void kh_gfx_tex_dirty(uint32_t ofs, uint32_t size);
+/* VRAM write generations, one per 16 KiB page of kh_ds_vram: bumped by every bulk CPU write
+ * (MI fills/copies, GX loads), so caches built from VRAM can tell which pages changed */
+#define KH_VRAM_PAGES (0xa4000 / 0x4000 + 1)
+extern uint32_t kh_vram_page_gen[KH_VRAM_PAGES];
+static inline void kh_vram_mark(uint32_t vofs, uint32_t size)
+{
+    uint32_t p = vofs >> 14, e = (vofs + (size ? size - 1 : 0)) >> 14;
+    for (; p <= e && p < KH_VRAM_PAGES; p++)
+        kh_vram_page_gen[p]++;
+}
 void kh_gfx_pltt_dirty(uint32_t ofs, uint32_t size);
 
 /* DS divider / square-root unit, bit exact (nitro_cp.c) */

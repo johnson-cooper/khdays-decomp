@@ -30,5 +30,9 @@ libs/msl/runtime
 libs/nitro/os/calls/func_01ff8128.c
 libs/nitro/os/calls/func_01ff8138.c
 libs/nitro/os/calls/func_0202019c.c
+# NitroSystem sndarc_stream.c ShutdownPlayer (release channels, close the stream, drop its queued
+# loads, FreePlayer), labelled OSi_DestroyThread and filed under nitro/os by the decomp; ForceStopStrm
+# calls it, and without it a stopped stream's handle never becomes invalid (title -> New Game hang).
+libs/nitro/os/calls/OSi_DestroyThread.c
 libs/nitro/gx/calls/GFXi_EnqueueCommand.c
 libs/nitro/gx/calls/GFXi_SaveStateTo.c

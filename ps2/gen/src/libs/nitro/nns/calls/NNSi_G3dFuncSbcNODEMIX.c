@@ -96,10 +96,10 @@ void NNSi_G3dFuncSbcNODEMIX(NNSG3dRenderState *state, u32 option)
 
     MIi_CpuClearFast(0, &accum, sizeof(accum));
     GXi_FlushCommandList();
-    registers->mode = 0;
-    registers->store = 1;
-    registers->identity = 0;
-    registers->mode = 2;
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(0));
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, store), (unsigned int)(1));
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, identity), (unsigned int)(0));
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(2));
     for (i = 0; i < count; ++i) {
         u32 cached;
         s32 cacheOffset;
@@ -112,8 +112,8 @@ void NNSi_G3dFuncSbcNODEMIX(NNSG3dRenderState *state, u32 option)
         if (!cached) {
             volatile u32 *restoreRegister = (volatile u32 *)((unsigned int)kh_ds_io + 0x450);
             state->nodeMixCacheValid[nodeId >> 5] |= 1U << (nodeId & 31);
-            *restoreRegister = entry->matrixIndex;
-            registers->mode = 1;
+            kh_ge_port_write1(0x450, (unsigned int)(entry->matrixIndex));
+            kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(1));
             G3_MultMtx43(&inverse[nodeId].invPosition);
         }
         if (i != 0) {
@@ -122,7 +122,7 @@ void NNSi_G3dFuncSbcNODEMIX(NNSG3dRenderState *state, u32 option)
         if (!cached) {
             while (G3X_GetClipMtx(&cache->clip) != 0) {
             }
-            registers->mode = 2;
+            kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(2));
             G3_MultMtx33(&inverse[nodeId].invVector);
         }
         weight = (fx32)(entry->weight << 4);
@@ -137,11 +137,11 @@ void NNSi_G3dFuncSbcNODEMIX(NNSG3dRenderState *state, u32 option)
     AddVector(&accum.vector, previousVector, weight);
     /* Mode 2 sets vectors; the following mode-1 load replaces all position words. */
     G3_LoadMtx43((const MtxFx43 *)&accum.vector);
-    registers->mode = 1;
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(1));
     G3_LoadMtx43(&accum.position);
-    registers->mode = 0;
-    registers->restore = 1;
-    registers->mode = 2;
-    registers->store = state->pSbc[1];
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(0));
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, restore), (unsigned int)(1));
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, mode), (unsigned int)(2));
+    kh_ge_port_write1(0x440 + (unsigned int)__builtin_offsetof(G3MatrixRegisters, store), (unsigned int)(state->pSbc[1]));
     state->pSbc += (state->pSbc[2] + 1) * 3;
 }

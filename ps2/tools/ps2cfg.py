@@ -34,6 +34,9 @@ GAME_CFLAGS = [
     "-fno-builtin",               # the game has its own memcpy-likes with SDK names
     "-fsigned-char",              # the matching build uses mwcc -char signed
     "-fcommon",                   # tentative definitions shared between files, as mwcc merges them
+    "-fno-toplevel-reorder",      # preserve address-ordered data objects and pointer-table aliases
+    "-fpack-struct=4",            # mwcc aligns 64-bit members to 4: DS struct sizes/offsets (heap
+                                  # blocks are sized with DS sizeofs, e.g. ov002's gauge context)
     "-w",
 ]
 GAME_INCLUDES = ["ps2/include", "include"]
@@ -64,11 +67,13 @@ def excluded_patterns():
     return _read_list("exclude.txt")
 
 
-def is_excluded(relpath):
+def is_excluded(relpath, dirs=True):
+    """dirs=False ignores directory patterns: a single file named in modules.txt is a reviewed
+    exception to the exclusion of its directory (file patterns and overrides still apply)."""
     relpath = relpath.replace("\\", "/")
     for pat in excluded_patterns():
         if pat.endswith("/"):
-            if relpath.startswith(pat) or ("/" + pat) in relpath:
+            if dirs and (relpath.startswith(pat) or ("/" + pat) in relpath):
                 return True
         elif relpath == pat or os.path.basename(relpath) == pat:
             return True
@@ -90,3 +95,33 @@ def overrides():
                 if f.endswith(".c"):
                     _OVR.add(os.path.splitext(f)[0])
     return _OVR
+
+
+_DATA_FILES = None
+
+
+def ds_data_files():
+    """Source files the DS build has as pure data (no .text in config/arm9/**/delinks.txt):
+    {relpath: (module, {".data": (start, end), ".rodata": (start, end)})}.  The PS2 link puts
+    their objects at the same module-relative addresses (gen_link.py) and prep caps their
+    alignment at 4 (R17), because game code reaches neighbouring objects by offset."""
+    global _DATA_FILES
+    if _DATA_FILES is not None:
+        return _DATA_FILES
+    import glob
+    out = {}
+    cfg = os.path.join(ROOT, "config", "arm9")
+    dirs = [("main", cfg)] + [(os.path.basename(d), d)
+                              for d in sorted(glob.glob(os.path.join(cfg, "overlays", "ov*")))]
+    for mod, d in dirs:
+        cur, secs = None, {}
+        for line in list(open(os.path.join(d, "delinks.txt"))) + ["END:"]:
+            if line and not line.startswith(" ") and line.strip().endswith(":"):
+                if cur and ".text" not in secs and (".data" in secs or ".rodata" in secs):
+                    out[cur] = (mod, {k: v for k, v in secs.items() if k in (".data", ".rodata")})
+                cur, secs = line.strip()[:-1], {}
+            elif cur and line.startswith("    ."):
+                p = line.split()
+                secs[p[0]] = (int(p[1].split(":")[1], 16), int(p[2].split(":")[1], 16))
+    _DATA_FILES = out
+    return out

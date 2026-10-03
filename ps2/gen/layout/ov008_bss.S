@@ -3,20 +3,56 @@
     .balign 32
     .globl __kh_bss_start_ov008
 __kh_bss_start_ov008:
+    .globl data_ov008_02090f00
+    .type data_ov008_02090f00, @object
+data_ov008_02090f00:
     .space 0x4
     .space 0x8
     .space 0x8
+    .globl data_ov008_02090f14
+    .type data_ov008_02090f14, @object
+data_ov008_02090f14:
     .space 0x4
     .space 0x4
+    .globl data_ov008_02090f1c
+    .type data_ov008_02090f1c, @object
+data_ov008_02090f1c:
     .space 0x4
+    .globl data_ov008_02090f20
+    .type data_ov008_02090f20, @object
+data_ov008_02090f20:
     .space 0x4
+    .globl data_ov008_02090f24
+    .type data_ov008_02090f24, @object
+data_ov008_02090f24:
     .space 0x1c
+    .globl data_ov008_02090f40
+    .type data_ov008_02090f40, @object
+data_ov008_02090f40:
     .space 0x60
+    .globl data_ov008_02090fa0
+    .type data_ov008_02090fa0, @object
+data_ov008_02090fa0:
     .space 0x4
+    .globl data_ov008_02090fa4
+    .type data_ov008_02090fa4, @object
+data_ov008_02090fa4:
     .space 0x4
+    .globl data_ov008_02090fa8
+    .type data_ov008_02090fa8, @object
+data_ov008_02090fa8:
     .space 0x4
+    .globl data_ov008_02090fac
+    .type data_ov008_02090fac, @object
+data_ov008_02090fac:
     .space 0x4
+    .globl data_ov008_02090fb0
+    .type data_ov008_02090fb0, @object
+data_ov008_02090fb0:
     .space 0x4
+    .globl data_ov008_02090fb4
+    .type data_ov008_02090fb4, @object
+data_ov008_02090fb4:
     .space 0xc
     .globl __kh_bss_end_ov008
 __kh_bss_end_ov008:

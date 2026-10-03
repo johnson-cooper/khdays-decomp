@@ -23,7 +23,9 @@
 #include <kernel.h>
 #include <delaythread.h>
 
-typedef u64 OSTick;
+/* 4-byte aligned like every 64-bit member on the DS: game code is built with -fpack-struct=4, so
+ * SDK structs shared with it (OSAlarm) must have the DS layout here too. */
+typedef u64 OSTick __attribute__((aligned(4)));
 typedef void *OSMessage;
 
 /* ------------------------------------------------------------ SDK layouts (DS) */
@@ -181,6 +183,8 @@ void OS_CreateThread(OSThread *t, void (*func)(void *), void *arg, void *stack, 
     KH_DBG("os", "thread %p created: ee id %d, DS prio %u", (void *)t, k->ee_id, (unsigned)prio);
 }
 
+static void queue_remove(OSThreadQueue *q, KhThread *k);
+
 void OS_WakeupThreadDirect(OSThread *t)
 {
     KhThread *k = kt_of(t);
@@ -198,7 +202,15 @@ void OS_WakeupThreadDirect(OSThread *t)
         if (started)
             return;
     }
-    k->state = OS_THREAD_STATE_READY;
+    {
+        /* unlink from any queue it sleeps on, so it can never be linked there twice */
+        int old = DIntr();
+        if (k->waiting_on)
+            queue_remove(k->waiting_on, k);
+        k->state = OS_THREAD_STATE_READY;
+        if (old)
+            EIntr();
+    }
     WakeupThread(k->ee_id);
 }
 
@@ -232,31 +244,55 @@ static void queue_remove(OSThreadQueue *q, KhThread *k)
 
 void OS_InitThreadQueue(OSThreadQueue *q) { q->head = q->tail = NULL; }
 
+/* The EE kernel counts WakeupThread calls made while the target is not asleep and lets that many
+ * later SleepThread calls return at once; the DS thread only resumes once OS_WakeupThread or
+ * OS_WakeupThreadDirect has made it READY.  So sleep until our own state says so: a banked EE
+ * wakeup is consumed by the loop instead of returning while the thread is still linked in the
+ * queue (the next OS_SleepThread would then link it twice and turn the queue into a cycle that
+ * OS_WakeupThread never finishes walking - the New Game stream-prepare hang). */
 void OS_SleepThread(OSThreadQueue *q)
 {
     KhThread *k = kt_current();
     int old = DIntr();
     if (!k)
         kh_panic("OS_SleepThread from a non-OS thread");
+    if (k->waiting_on)
+        queue_remove(k->waiting_on, k);
     if (q)
         queue_push(q, k);
     k->state = OS_THREAD_STATE_WAITING;
-    if (old)
+    while (k->state == OS_THREAD_STATE_WAITING) {
         EIntr();
-    SleepThread();
+        SleepThread();
+        DIntr();
+    }
+    if (!old)
+        return;
+    EIntr();
 }
 
+/* Like the SDK: take every thread off the queue and make it READY first, then let the scheduler
+ * run.  WakeupThread switches at once to a higher-priority thread, which may go back to sleep on
+ * this same queue before we resume; draining "while (q->head)" would then wake it again forever
+ * (the livelock between the game thread and NitroSystem's StrmThread after New Game). */
 void OS_WakeupThread(OSThreadQueue *q)
 {
+    int ids[KH_MAX_THREADS], n = 0, i;
     int old = DIntr();
-    while (q->head) {
+    while (q->head && n < KH_MAX_THREADS) {
         KhThread *k = kt_of(q->head);
+        if (!k) {                       /* not one of ours: drop the link rather than spin */
+            q->head = q->tail = NULL;
+            break;
+        }
         queue_remove(q, k);
         k->state = OS_THREAD_STATE_READY;
-        WakeupThread(k->ee_id);
+        ids[n++] = k->ee_id;
     }
     if (old)
         EIntr();
+    for (i = 0; i < n; i++)
+        WakeupThread(ids[i]);
 }
 
 void OS_RescheduleThread(void)
@@ -613,6 +649,9 @@ void OS_InitArena(void)
 }
 
 void OS_InitArenaEx(void) { }
+/* The DS DTCM is 16 KiB with its arena at the top; here the arena is the whole stand-in block, so
+ * "DTCM base + 0x4000 - arena lo" (the space left, as ov024 measures it) stays right. */
+void *OS_GetDTCMAddress(void) { return g_arena_init_lo[OS_ARENA_DTCM]; }
 void *OS_GetArenaLo(int id) { return g_arena_lo[id]; }
 void *OS_GetArenaHi(int id) { return g_arena_hi[id]; }
 void *OS_GetInitArenaLo(int id) { return g_arena_init_lo[id]; }
@@ -720,12 +759,22 @@ void Game_ReadLocalProfile(u8 *out)
     *(u16 *)(out + 0x52) = 0;
 }
 
-void OS_Terminate(void) { kh_panic("OS_Terminate (the game stopped itself)"); }
+void OS_Terminate(void)
+{
+#if KH_PS2_DEBUG
+    extern void kh_nns_heap_report(int detail);
+    kh_nns_heap_report(1);   /* the game stops itself mostly on a failed allocation */
+#endif
+    kh_panic("OS_Terminate from %p (the game stopped itself)", __builtin_return_address(0));
+}
 void OS_Halt(void) { kh_panic("OS_Halt"); }
 void OS_ResetSystem(u32 param)
 {
-    /* The DS soft reset (L+R+Start+Select, or after a fatal card error) restarts the game. */
-    kh_panic("OS_ResetSystem(%u): soft reset not implemented yet", (unsigned)param);
+    /* The DS soft reset (return to title, L+R+Start+Select, a fatal card error) restarts the game:
+     * here the ELF is executed again */
+    extern void kh_platform_restart(void);
+    (void)param;
+    kh_platform_restart();
 }
 
 /* printf family: the SDK's formats are a subset of C's. */
@@ -745,8 +794,12 @@ int OS_SPrintf(char *dst, const char *fmt, ...)
 }
 void OS_Printf(const char *fmt, ...)
 {
+#if KH_PS2_DEBUG
     char buf[256];
     va_list ap;
     va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
     kh_log(KH_LOG_INFO, "game", "%s", buf);
+#else
+    (void)fmt;
+#endif
 }
