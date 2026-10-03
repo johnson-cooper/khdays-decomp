@@ -37,6 +37,7 @@ static int crash_handler(EE_RegFrame *f)
         screen_line[i] = line[i];
         printf("CRASH %s\n", line[i]);
     }
+    fflush(stdout);
 
     if (!ps2_gs_crash_screen("Kingdom Hearts 358/2 Days (PS2) - crash", screen_line, 6)) {
         /* Very early exception, before kh_video_init(): retain the SDK fallback. */

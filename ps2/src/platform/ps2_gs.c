@@ -108,6 +108,8 @@ void kh_gs_chain_ref(KhGsPacket *p, const void *data, uint32_t qwc)
 {
     if (p->tag < 0)
         kh_panic("kh_gs_chain_ref on a normal-mode packet");
+    if (qwc && (!data || ((uintptr_t)data & 15u)))
+        kh_panic("VIF1 REF source %p is not 16-byte aligned (%u qwords)", data, (unsigned)qwc);
     close_tag(p, TAG_CNT);
     while (qwc) {
         uint32_t n = qwc > 0xffff ? 0xffff : qwc;
@@ -128,6 +130,10 @@ void kh_gs_chain_vif(KhGsPacket *p, uint32_t vif0, uint32_t vif1)
 
 void kh_gs_chain_vif_ref(KhGsPacket *p, uint32_t vif0, uint32_t vif1, const void *ref, uint32_t qwc)
 {
+    if (qwc > 0xffffu)
+        kh_panic("VIF1 REF is too large (%u qwords)", (unsigned)qwc);
+    if (qwc && (!ref || ((uintptr_t)ref & 15u)))
+        kh_panic("VIF1 REF source %p is not 16-byte aligned (%u qwords)", ref, (unsigned)qwc);
     close_tag(p, TAG_CNT);
     kh_gs_packet_q(p, KH_DMATAG(qwc, TAG_REF, (uintptr_t)ref), (uint64_t)vif0 | ((uint64_t)vif1 << 32));
     open_tag(p);
@@ -182,7 +188,17 @@ void kh_vu1_init(void)
 void kh_gs_upload_ref(KhGsPacket *p, const void *src, int bp, int bw, int psm, int x, int y, int w, int h)
 {
     int bpp = (psm == GS_PSM_8) ? 8 : (psm == GS_PSM_4) ? 4 : (psm == GS_PSM_16 || psm == GS_PSM_16S) ? 16 : 32;
-    uint32_t qw = ((uint32_t)w * (uint32_t)h * (uint32_t)bpp / 8u + 15) / 16;
+    uint32_t bits, bytes, qw;
+
+    if (w <= 0 || h <= 0 || bw <= 0 || bp < 0)
+        kh_panic("bad GS upload geometry: bp=%d bw=%d %dx%d", bp, bw, w, h);
+    if ((uint32_t)bp * 256u >= GS_VRAM_BYTES)
+        kh_panic("GS upload base 0x%x is outside 4 MiB VRAM", (unsigned)bp);
+    bits = (uint32_t)w * (uint32_t)h * (uint32_t)bpp;
+    bytes = (bits + 7u) / 8u;
+    qw = (bytes + 15u) / 16u;
+    if (bytes && !src)
+        kh_panic("NULL GS upload source (%u bytes)", (unsigned)bytes);
 
     kh_gs_packet_ad_begin(p, 4);
     kh_gs_packet_q(p, GS_SET_BITBLTBUF(0, 0, 0, bp, bw, psm), GS_REG_BITBLTBUF);
@@ -190,7 +206,25 @@ void kh_gs_upload_ref(KhGsPacket *p, const void *src, int bp, int bw, int psm, i
     kh_gs_packet_q(p, GS_SET_TRXREG(w, h), GS_REG_TRXREG);
     kh_gs_packet_q(p, GS_SET_TRXDIR(0), GS_REG_TRXDIR);
     kh_gs_packet_q(p, GIF_SET_TAG(qw, 1, 0, 0, GIF_FLG_IMAGE, 0), 0);
-    kh_gs_chain_ref(p, src, qw);
+
+    /* Real VIF1/GIF REF DMA requires a qword-aligned source and consumes complete qwords.
+     * PCSX2 can be more forgiving.  Keep the zero-copy fast path when both are naturally safe;
+     * otherwise copy exactly the image bytes into the already-aligned frame packet and zero-pad
+     * the last qword.  This fixes the class for every 2D/3D texture caller instead of teaching
+     * individual scenes about DMAC alignment. */
+    if ((((uintptr_t)src & 15u) == 0) && ((bytes & 15u) == 0)) {
+        kh_gs_chain_ref(p, src, qw);
+    } else {
+        uint32_t padded = qw * 16u;
+        uint8_t *dst;
+        if (p->len + qw > p->cap)
+            kh_panic("GS frame packet overflow while staging %u-byte IMAGE", (unsigned)bytes);
+        dst = (uint8_t *)p->base + p->len * 16u;
+        memcpy(dst, src, bytes);
+        if (padded > bytes)
+            memset(dst + bytes, 0, padded - bytes);
+        p->len += qw;
+    }
     /* texels written by a transfer are only guaranteed to be sampled after TEXFLUSH; without it
      * the GS (and PCSX2's texture cache) can keep drawing what was there before (old HUD digits
      * over the pause menu's buttons) */
@@ -385,7 +419,7 @@ int ps2_gs_crash_screen(const char *title, const char *const *lines, int count)
     return 1;
 }
 
-/* TEX0 that reads the frame being drawn as a PSMCT32 texture (1024x512 addressing) */
+/* TEX0 that reads the frame being drawn with the framebuffer's PSM (1024x512 addressing) */
 uint64_t kh_gs_frame_tex0(void) { return GS_SET_TEX0(g_fbp[g_draw] / 64, g_w / 64, FB_PSM, 10, 9, 1, 0, 0, 0, 0, 0, 0); }
 
 /* FRAME_1 of the frame being drawn, with write mask fbmsk (bits set = not written) */

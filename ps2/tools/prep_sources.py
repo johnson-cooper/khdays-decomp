@@ -64,9 +64,12 @@ the original.  Every rule is mechanical and listed here:
   R18 the cloned GetVarRecordByIndex functions walk even-sized, length-prefixed message records.
       ARMv5's LDR accepts their 2-mod-4 length fields (with rotate semantics); EE lw raises AdEL.
       Read those little-endian fields bytewise through kh_read_s32_le_unaligned instead.
-  R19 title-scene 64-bit timers reconstructed at offsets that are only 4-byte aligned are
+  R19 confirmed 64-bit accesses reconstructed at offsets that are only 4-byte aligned are
       accessed through kh_unaligned.h.  R5900 ld/sd require 8-byte alignment; the DS layout
-      and -fpack-struct=4 ABI stay untouched.
+      and -fpack-struct=4 ABI stay untouched.  After all preparation rules, every PS2-bound
+      source is also audited for direct 64-bit pointer dereferences whose address expression
+      contains a literal non-8-byte offset; preparation fails rather than emitting a new
+      hardware-only AdEL/AdES candidate.
   R15 literal ITCM addresses of data embedded in ITCM code (0x01ff8000-0x01ffffff is the top of
       EE RAM, the main thread's stack) become the PS2 definitions of that data, listed in
       ITCM_DATA (ps2/src/nitro/nitro_itcm_data.c), e.g. G3D's texture-matrix builder tables.
@@ -387,6 +390,73 @@ def unaligned_title_u64(text, relp):
     return '#include "platform/kh_unaligned.h"\n' + text
 
 
+# Direct 64-bit pointer casts are particularly dangerous on the R5900: gcc may emit ld/sd
+# even when the decompiled DS address expression is only 4-byte aligned.  The explicit table
+# above fixes accesses whose source shape is known; this second line of defence rejects the same
+# class when it is written with another 64-bit spelling or appears in another PS2-bound file.
+R19_U64_DEREF = re.compile(
+    r"\*\s*\(\s*(?:(?:const|volatile)\s+)*"
+    r"(?:u64|s64|uint64_t|int64_t|(?:(?:unsigned|signed)\s+)?long\s+long)"
+    r"\s*\*\s*\)"
+)
+R19_AUDIT_FILES = 0
+
+
+def _r19_code_only(text):
+    def blank(m):
+        return re.sub(r"[^\n]", " ", m.group(0))
+    return re.sub(r"/\*.*?\*/|//[^\n]*|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
+                  blank, text, flags=re.S)
+
+
+def _r19_matching_paren(text, pos):
+    depth = 0
+    for i in range(pos, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def audit_r5900_u64_casts(text, relp):
+    """Fail on statically provable non-8-byte direct u64/s64 pointer dereferences."""
+    global R19_AUDIT_FILES
+    if ps2cfg.is_excluded(relp):
+        return
+    R19_AUDIT_FILES += 1
+    code = _r19_code_only(text)
+    bad = []
+    for m in R19_U64_DEREF.finditer(code):
+        pos = m.end()
+        while pos < len(code) and code[pos].isspace():
+            pos += 1
+        expr = None
+        if pos < len(code) and code[pos] == "(":
+            end = _r19_matching_paren(code, pos)
+            if end >= 0:
+                expr = code[pos + 1:end]
+        else:
+            lit = re.match(r"0[xX][0-9a-fA-F]+|\d+", code[pos:])
+            if lit and (int(lit.group(0), 0) & 7):
+                bad.append((code.count("\n", 0, m.start()) + 1, lit.group(0)))
+        if expr is None:
+            continue
+        for off in re.finditer(r"[+-]\s*(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b", expr):
+            value = int(off.group(1), 0)
+            if value & 7:
+                bad.append((code.count("\n", 0, m.start()) + 1, off.group(0).strip()))
+                break
+    if bad:
+        where = ", ".join(f"line {line} ({off})" for line, off in bad[:8])
+        raise SystemExit(
+            f"prep R19 audit: unsafe direct 64-bit dereference in {relp}: {where}; "
+            "use platform/kh_unaligned.h or add a reviewed mechanical R19 transform"
+        )
+
+
 def zero_globals(text):
     return ZERO_GLOBAL.sub(r"\1;", text)
 
@@ -657,6 +727,7 @@ def main():
                 new = PACKED_BASE.sub("+ KH_DS_PACKED_PTR_BASE", new)
                 new = strip_comments_aware_sub(new, relp)
                 new = geometry_port_pointers(new, relp)
+                audit_r5900_u64_casts(new, relp)
                 if new != text:
                     dst = os.path.join(OUT, relp)
                     hdr = "/* PS2: mechanically prepared copy of %s (ps2/tools/prep_sources.py). Do not edit. */\n" % relp
@@ -700,7 +771,8 @@ def main():
           f"{len(R16_HITS)} geometry register pointers routed to the engine (R16); "
           f"{len(R17_FILES)} data files aligned (R17); "
           f"{len(R18_HITS)} packed record walkers made alignment-safe (R18); "
-          f"{len(R19_HITS)} title timer sources made 64-bit alignment-safe (R19)")
+          f"{len(R19_HITS)} confirmed sources made 64-bit alignment-safe; "
+          f"{R19_AUDIT_FILES} PS2-bound sources passed the direct-u64 audit (R19)")
     for h in R16_HITS:
         print("  R16", h)
 

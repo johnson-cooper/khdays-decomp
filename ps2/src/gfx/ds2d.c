@@ -31,6 +31,7 @@
 
 extern unsigned char kh_ds_io[], kh_ds_pal[], kh_ds_oam[];
 extern unsigned char *kh_nitro_view_ptr(int view, uint32_t ofs);
+extern uint32_t kh_nitro_view_banks(int view);
 enum { VIEW_BG, VIEW_OBJ, VIEW_SUB_BG, VIEW_SUB_OBJ };
 
 #define IO16(o) (*(volatile u16 *)(kh_ds_io + (o)))
@@ -54,6 +55,7 @@ enum { VIEW_BG, VIEW_OBJ, VIEW_SUB_BG, VIEW_SUB_OBJ };
 #define CLUT_WORDS  (512 / 4)
 static u32 g_base;                 /* words */
 static int g_ready;
+#define GS_VRAM_WORDS (4u * 1024u * 1024u / 4u)
 
 static u32 tex_addr(int eng, int slot)
 {
@@ -84,6 +86,54 @@ static u32 capture_addr(void) { return bitmap_addr() + BITMAP_WORDS; }
  * a CLUT into the GS when TEX0 is written, so the block can take the next palette right after) */
 static u32 extclut_addr(int eng) { return capture_addr() + CAPTURE_WORDS + (u32)eng * 256; }
 u32 kh_ds2d_vram_words(void) { return capture_addr() - g_base + CAPTURE_WORDS + 2 * 256; }
+
+/* Prove the fixed 2D reservation before the first frame uses it.  All addresses are GS words;
+ * this catches overlap with framebuffer/Z/font space, overlap between 2D slots, arithmetic
+ * wraparound and any end beyond the physical 4 MiB GS VRAM. */
+static u32 vram_span(const char *name, u32 start, u32 words, u32 cursor)
+{
+    if (start < cursor)
+        kh_panic("GS VRAM overlap at %s: 0x%x < previous end 0x%x",
+                 name, (unsigned)start, (unsigned)cursor);
+    if (start > GS_VRAM_WORDS || words > GS_VRAM_WORDS - start)
+        kh_panic("GS VRAM range %s exceeds 4 MiB: 0x%x + 0x%x words",
+                 name, (unsigned)start, (unsigned)words);
+    return start + words;
+}
+
+static u32 validate_vram_layout(void)
+{
+    u32 fixed_end = (kh_gs_texpool_base() + 3u) / 4u;
+    u32 cursor = g_base, end;
+    int eng, slot;
+
+    if (g_base < fixed_end)
+        kh_panic("2D GS VRAM overlaps fixed framebuffer/Z/font area: 0x%x < 0x%x",
+                 (unsigned)g_base, (unsigned)fixed_end);
+    if (g_base & 2047u)
+        kh_panic("2D GS VRAM base 0x%x is not page aligned", (unsigned)g_base);
+
+    for (eng = 0; eng < 2; eng++) {
+        for (slot = 0; slot < SLOTS; slot++) {
+            u32 words = slot < 4 ? TEXSZ_WORDS : OBJ_SZ_WORDS;
+            char name[20];
+            snprintf(name, sizeof name, "eng%d texture%d", eng, slot);
+            cursor = vram_span(name, tex_addr(eng, slot), words, cursor);
+        }
+    }
+    cursor = vram_span("4bpp CLUTs", g_base + 2 * ENG_WORDS, CLUT4_WORDS, cursor);
+    cursor = vram_span("8bpp CLUTs", g_base + 2 * ENG_WORDS + CLUT4_WORDS, CLUT8_WORDS, cursor);
+    cursor = vram_span("bitmap scratch", bitmap_addr(), BITMAP_WORDS, cursor);
+    cursor = vram_span("display capture", capture_addr(), CAPTURE_WORDS, cursor);
+    cursor = vram_span("extended CLUT A", extclut_addr(0), 256, cursor);
+    cursor = vram_span("extended CLUT B", extclut_addr(1), 256, cursor);
+
+    end = g_base + kh_ds2d_vram_words();
+    if (end < g_base || end != cursor || end > GS_VRAM_WORDS)
+        kh_panic("2D GS VRAM end mismatch: calculated 0x%x, spans 0x%x, limit 0x%x",
+                 (unsigned)end, (unsigned)cursor, (unsigned)GS_VRAM_WORDS);
+    return end;
+}
 
 /* ---------------------------------------------------------------- output */
 
@@ -211,6 +261,30 @@ void kh_ds2d_frame_begin(void)
     kh_ds2d_dbg &= ~1u;
 #endif
 }
+
+#if KH_PS2_DEBUG
+/* Sparse transition trace: Engine B is the lower DS screen in the title flow.  Log only state
+ * changes, so a hardware log can place a failure before/after the New Game register rewrite
+ * without turning real-device logging into a per-frame timing problem. */
+static void trace_engine_b_state(void)
+{
+    static u32 last_dispcnt = 0xffffffffu;
+    static u32 last_bg = 0xffffffffu;
+    static u32 last_banks = 0xffffffffu;
+    u32 dispcnt = IO32(0x1000);
+    u32 bg = (u32)IO16(0x100a) | ((u32)IO16(0x100e) << 16);
+    u32 banks = kh_nitro_view_banks(VIEW_SUB_BG) |
+                (kh_nitro_view_banks(VIEW_SUB_OBJ) << 16);
+    if (dispcnt != last_dispcnt || bg != last_bg || banks != last_banks) {
+        KH_INFO("engB", "DISPCNT=%08x BG1CNT=%04x BG3CNT=%04x banks BG=%03x OBJ=%03x",
+                (unsigned)dispcnt, (unsigned)(bg & 0xffff), (unsigned)(bg >> 16),
+                (unsigned)(banks & 0xffff), (unsigned)(banks >> 16));
+        last_dispcnt = dispcnt;
+        last_bg = bg;
+        last_banks = banks;
+    }
+}
+#endif
 
 static u32 ext_clut(KhGsPacket *p, int eng, int obj, int slot, int pal)
 {
@@ -1244,14 +1318,16 @@ void kh_ds2d_backdrop(int eng, int x, int y, int w, int h)
 
 void kh_ds2d_init(void)
 {
+    u32 end_words;
     if (g_ready)
         return;
     g_base = (kh_gs_texpool_base() / 4 + 2047) & ~2047u;   /* page aligned */
+    end_words = validate_vram_layout();
     g_ready = 1;
     {
         extern void kh_tex3d_init(uint32_t base_bytes, uint32_t size_bytes);
-        uint32_t tex_base = (g_base + kh_ds2d_vram_words()) * 4;
-        kh_tex3d_init(tex_base, 4u * 1024u * 1024u - tex_base);
+        uint32_t tex_base = end_words * 4u;
+        kh_tex3d_init(tex_base, (GS_VRAM_WORDS - end_words) * 4u);
     }
     KH_INFO("ds2d", "2D compositor: %u KiB of GS VRAM at word 0x%x", (unsigned)(kh_ds2d_vram_words() * 4 / 1024),
             (unsigned)g_base);
@@ -1263,6 +1339,10 @@ void kh_ds2d_draw(int eng, int x, int y, int w, int h)
     KhGsPacket *p = kh_gs_frame_packet();
     Rect r;
     kh_ds2d_init();
+#if KH_PS2_DEBUG
+    if (eng)
+        trace_engine_b_state();
+#endif
     kh_prof_begin(KH_PROF_R2D);
     r.x = (float)x;
     r.y = (float)y;

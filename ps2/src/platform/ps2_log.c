@@ -181,6 +181,7 @@ void kh_log(int level, const char *sub, const char *fmt, ...)
 void kh_panic(const char *fmt, ...)
 {
     char msg[256];
+    const char *screen_line[1];
     va_list ap;
     int i;
 
@@ -190,15 +191,28 @@ void kh_panic(const char *fmt, ...)
     kh_log(KH_LOG_ERROR, "PANIC", "%s", msg);
     kh_log_flush();
 
-    /* Fall back to the SDK's debug console: it reprograms the GS itself, so it works whatever
-     * state the renderer was left in. */
-    init_scr();
-    scr_clear();
-    scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - fatal error\n\n  %s\n\n  Recent log:\n", msg);
-    for (i = 0; i < RING_LINES; i++) {
-        const char *l = g_ring[(g_ring_head + i) % RING_LINES];
-        if (l[0])
-            scr_printf("  %s", l);
+    /* Keep a GS-independent copy on the console too.  A late panic can be the reason the GS
+     * is unhealthy, so diagnostics must not exist only in the framebuffer. */
+    fprintf(stderr, "PANIC %s\n", msg);
+    fflush(stderr);
+    fflush(stdout);
+
+    /* Once video is live, libdebug's init_scr() is NOT a safe fallback: it assumes a PSMCT32
+     * framebuffer at VRAM 0, while the game runs full-height PSMCT16 FIELD buffers.  On real GS
+     * hardware that mismatch is itself the dense blue/patterned "crash screen" we are trying to
+     * diagnose.  Use the port's renderer exactly as the EE exception handler does. */
+    screen_line[0] = msg;
+    if (!ps2_gs_crash_screen("Kingdom Hearts 358/2 Days (PS2) - fatal error",
+                             screen_line, 1)) {
+        /* Very early panic, before kh_video_init(): only here is libdebug allowed to own GS. */
+        init_scr();
+        scr_clear();
+        scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - fatal error\n\n  %s\n\n  Recent log:\n", msg);
+        for (i = 0; i < RING_LINES; i++) {
+            const char *l = g_ring[(g_ring_head + i) % RING_LINES];
+            if (l[0])
+                scr_printf("  %s", l);
+        }
     }
     for (;;)
         SleepThread();
