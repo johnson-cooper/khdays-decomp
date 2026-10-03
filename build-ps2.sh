@@ -2,7 +2,9 @@
 # Build the native PlayStation 2 port with PS2BUILD.
 #
 #   ./build-ps2.sh                         normal build (debug logs/profiler off)
-#   KH_PS2_DEBUG=1 ./build-ps2.sh          diagnostic build (logs/profiler/checks on)
+#   KH_PS2_DEBUG=1 ./build-ps2.sh          diagnostic build (logs/profiler/watchdog on)
+#   KH_PS2_DEBUG=1 KH_PS2_HEAP_CHECK=1 ./build-ps2.sh
+#                                          add the very expensive full heap integrity scans
 #   ./build-ps2.sh --quick                 skip regeneration (same as plain `ps2build build`)
 #
 # Output: build/bin/khdays-ps2.elf (the game) and build/bin/khdays-platform-test.elf.
