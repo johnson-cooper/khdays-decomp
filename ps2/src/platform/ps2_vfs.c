@@ -13,8 +13,9 @@
  * fileXio (mass, mmce, pfs, and the legacy ioman devices host:, cdrom0:, mc0:).  fileXio is only
  * called directly for what POSIX cannot express (mounting a HDD partition).
  *
- * Each open file has a read-ahead buffer: the game's own loader reads 512-byte blocks, which
- * would otherwise become 512-byte device transactions.
+ * Each open read file has two 128 KiB read-ahead windows.  This matters for planar stereo
+ * streams whose left/right channel cursors are far apart in one file: one window would thrash
+ * on every alternating channel read on real USB/storage hardware.
  */
 #define NEWLIB_PORT_AWARE   /* only for fileXioInit/Mount; all file I/O below is POSIX */
 #include "platform/kh_platform.h"
@@ -32,15 +33,23 @@
 #include <fileXio_rpc.h>
 
 #define READAHEAD (128 * 1024)
+#define READ_WINDOWS 2
+
+typedef struct KhReadWindow {
+    uint32_t pos;
+    uint32_t len;
+    uint32_t age;
+    uint8_t *data;
+} KhReadWindow;
 
 struct KhFile {
     int fd;
     int writable;
     uint32_t size;
     uint32_t pos;          /* logical position */
-    uint32_t buf_pos;      /* file offset of buf[0] */
-    uint32_t buf_len;      /* valid bytes in buf */
-    uint8_t *buf;
+    uint32_t cache_age;
+    uint8_t *cache;
+    KhReadWindow win[READ_WINDOWS];
 };
 
 static char g_boot_dir[256] = "host:";
@@ -169,7 +178,6 @@ void kh_vfs_resolve(const char *rel, char *out, size_t outsz)
 
 /* device calls with EE interrupts on (kh_io_begin) */
 static int io_open(const char *p, int fl, int mode) { int w = kh_io_begin(); int r = open(p, fl, mode); kh_io_end(w); return r; }
-static int io_read(int fd, void *b, unsigned n) { int w = kh_io_begin(); int r = (int)read(fd, b, n); kh_io_end(w); return r; }
 static int io_write(int fd, const void *b, unsigned n) { int w = kh_io_begin(); int r = (int)write(fd, b, n); kh_io_end(w); return r; }
 static off_t io_lseek(int fd, off_t o, int wh) { int w = kh_io_begin(); off_t r = lseek(fd, o, wh); kh_io_end(w); return r; }
 static int io_close(int fd) { int w = kh_io_begin(); int r = close(fd); kh_io_end(w); return r; }
@@ -204,58 +212,116 @@ KhFile *kh_file_open(const char *path, int write)
     f->fd = fd;
     f->writable = write;
     if (!write) {
+        int i;
         off_t sz = io_lseek(fd, 0, SEEK_END);
         io_lseek(fd, 0, SEEK_SET);
         f->size = sz < 0 ? 0 : (uint32_t)sz;
-        f->buf = kh_alloc(READAHEAD, 64, KH_LIFE_GLOBAL, KH_MEM_FILE_CACHE);
+        f->cache = kh_alloc(READAHEAD * READ_WINDOWS, 64, KH_LIFE_GLOBAL, KH_MEM_FILE_CACHE);
+        if (f->cache) {
+            for (i = 0; i < READ_WINDOWS; i++)
+                f->win[i].data = f->cache + i * READAHEAD;
+        }
     }
     return f;
 }
 
-static int raw_read(KhFile *f, uint32_t off, void *dst, uint32_t n)
+/* The device's file position is shared by lseek/read, so the pair must live in one I/O
+ * critical region.  Do not implement this in terms of io_lseek()+io_read(): that would
+ * release ownership between the two operations. */
+static int raw_read_at(KhFile *f, uint32_t off, void *dst, uint32_t n)
 {
-    if (io_lseek(f->fd, (off_t)off, SEEK_SET) < 0)
-        return -1;
-    return (int)io_read(f->fd, dst, n);
+    int w = kh_io_begin();
+    int r;
+    if (lseek(f->fd, (off_t)off, SEEK_SET) < 0)
+        r = -1;
+    else
+        r = (int)read(f->fd, dst, n);
+    kh_io_end(w);
+    return r;
 }
 
-int32_t kh_file_read(KhFile *f, void *dst, uint32_t size)
+static KhReadWindow *find_window(KhFile *f, uint32_t pos)
+{
+    int i;
+    for (i = 0; i < READ_WINDOWS; i++) {
+        KhReadWindow *w = &f->win[i];
+        if (w->data && w->len && pos >= w->pos && pos < w->pos + w->len) {
+            w->age = ++f->cache_age;
+            return w;
+        }
+    }
+    return NULL;
+}
+
+static KhReadWindow *pick_window(KhFile *f)
+{
+    int i;
+    KhReadWindow *oldest = NULL;
+    for (i = 0; i < READ_WINDOWS; i++) {
+        KhReadWindow *w = &f->win[i];
+        if (!w->data)
+            continue;
+        if (!w->len)
+            return w;
+        if (!oldest || w->age < oldest->age)
+            oldest = w;
+    }
+    return oldest;
+}
+
+int32_t kh_file_read_at(KhFile *f, uint32_t offset, void *dst, uint32_t size)
 {
     uint8_t *d = dst;
+    uint32_t pos = offset;
     uint32_t done = 0;
 
-    if (f->pos >= f->size)
+    if (!f || f->writable || pos >= f->size)
         return 0;
-    if (size > f->size - f->pos)
-        size = f->size - f->pos;
+    if (size > f->size - pos)
+        size = f->size - pos;
+
     kh_prof_begin(KH_PROF_LOAD);
     while (done < size) {
         uint32_t want = size - done;
-        if (f->pos >= f->buf_pos && f->pos < f->buf_pos + f->buf_len) {
-            uint32_t avail = f->buf_pos + f->buf_len - f->pos;
+        KhReadWindow *w = find_window(f, pos);
+        if (w) {
+            uint32_t avail = w->pos + w->len - pos;
             uint32_t n = want < avail ? want : avail;
-            memcpy(d + done, f->buf + (f->pos - f->buf_pos), n);
+            memcpy(d + done, w->data + (pos - w->pos), n);
             done += n;
-            f->pos += n;
-        } else if (want >= READAHEAD || !f->buf) {
+            pos += n;
+        } else if (want >= READAHEAD || !f->cache) {
             /* big read: straight into the destination, no copy */
-            int r = raw_read(f, f->pos, d + done, want);
+            int r = raw_read_at(f, pos, d + done, want);
             if (r <= 0)
                 break;
             done += (uint32_t)r;
-            f->pos += (uint32_t)r;
+            pos += (uint32_t)r;
         } else {
-            /* refill aligned to 2 KiB so device transfers stay sector-aligned */
-            uint32_t start = f->pos & ~2047u;
-            int r = raw_read(f, start, f->buf, READAHEAD);
-            if (r <= 0 || start + (uint32_t)r <= f->pos)
+            /* Refill the unused/LRU window.  Keep the device-friendly 2 KiB alignment. */
+            uint32_t start = pos & ~2047u;
+            KhReadWindow *victim = pick_window(f);
+            int r;
+            if (!victim)
                 break;
-            f->buf_pos = start;
-            f->buf_len = (uint32_t)r;
+            r = raw_read_at(f, start, victim->data, READAHEAD);
+            if (r <= 0 || start + (uint32_t)r <= pos)
+                break;
+            victim->pos = start;
+            victim->len = (uint32_t)r;
+            victim->age = ++f->cache_age;
         }
     }
     kh_prof_end(KH_PROF_LOAD);
     return (int32_t)done;
+}
+
+int32_t kh_file_read(KhFile *f, void *dst, uint32_t size)
+{
+    int32_t r = kh_file_read_at(f, f->pos, dst, size);
+    if (r > 0)
+        f->pos += (uint32_t)r;
+    return r;
 }
 
 int32_t kh_file_write(KhFile *f, const void *src, uint32_t size)
@@ -290,7 +356,7 @@ int kh_file_close(KhFile *f)
     if (!f)
         return 0;
     r = io_close(f->fd);
-    kh_free(f->buf);
+    kh_free(f->cache);
     kh_free(f);
     return r < 0 ? r : 0;
 }

@@ -19,5 +19,8 @@ void ps2_time_install_vblank(void);
 /* GS VRAM accounting (ps2_gs.c) */
 uint32_t ps2_gs_vram_used(void);
 uint32_t ps2_gs_vram_total(void);
+/* Draw an exception screen through the port's 16-bit FIELD renderer.  Returns 0 if video
+ * is not initialized yet, so the caller can fall back to libdebug. */
+int ps2_gs_crash_screen(const char *title, const char *const *lines, int count);
 
 #endif

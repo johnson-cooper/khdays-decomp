@@ -1,0 +1,481 @@
+diff --git a/ps2/include/platform/kh_unaligned.h b/ps2/include/platform/kh_unaligned.h
+--- a/ps2/include/platform/kh_unaligned.h
++++ b/ps2/include/platform/kh_unaligned.h
+@@ -32,6 +32,36 @@
+ static inline int32_t kh_read_s32_le_unaligned(const void *ptr)
+ {
+     return (int32_t)kh_read_u32_le_unaligned(ptr);
+ }
+ 
++static inline uint64_t kh_read_u64_le_unaligned(const void *ptr)
++{
++    const uint8_t *p = (const uint8_t *)ptr;
++    return (uint64_t)kh_read_u32_le_unaligned(p)
++         | ((uint64_t)kh_read_u32_le_unaligned(p + 4) << 32);
++}
++
++static inline int64_t kh_read_s64_le_unaligned(const void *ptr)
++{
++    return (int64_t)kh_read_u64_le_unaligned(ptr);
++}
++
++static inline void kh_write_u64_le_unaligned(void *ptr, uint64_t value)
++{
++    uint8_t *p = (uint8_t *)ptr;
++    p[0] = (uint8_t)(value >> 0);
++    p[1] = (uint8_t)(value >> 8);
++    p[2] = (uint8_t)(value >> 16);
++    p[3] = (uint8_t)(value >> 24);
++    p[4] = (uint8_t)(value >> 32);
++    p[5] = (uint8_t)(value >> 40);
++    p[6] = (uint8_t)(value >> 48);
++    p[7] = (uint8_t)(value >> 56);
++}
++
++static inline void kh_write_s64_le_unaligned(void *ptr, int64_t value)
++{
++    kh_write_u64_le_unaligned(ptr, (uint64_t)value);
++}
++
+ #endif /* KH_UNALIGNED_H */
+diff --git a/ps2/tools/prep_sources.py b/ps2/tools/prep_sources.py
+--- a/ps2/tools/prep_sources.py
++++ b/ps2/tools/prep_sources.py
+@@ -64,3 +64,6 @@
+   R18 the cloned GetVarRecordByIndex functions walk even-sized, length-prefixed message records.
+       ARMv5's LDR accepts their 2-mod-4 length fields (with rotate semantics); EE lw raises AdEL.
+       Read those little-endian fields bytewise through kh_read_s32_le_unaligned instead.
++  R19 title-scene 64-bit timers reconstructed at offsets that are only 4-byte aligned are
++      accessed through kh_unaligned.h.  R5900 ld/sd require 8-byte alignment; the DS layout
++      and -fpack-struct=4 ABI stay untouched.
+@@ -271,2 +274,115 @@
+ R18_HITS = []
+ 
++TITLE_U64_UNALIGNED = {
++    "src/overlays/scenes/ov000_title/Ov000_BeginSaveCheck.c": [
++        (
++            "    *(unsigned long long *)(data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
++            "    kh_write_u64_le_unaligned(data_ov000_0205ac24 + 0x4ae4, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickFadeThenEnterState2.c": [
++        (
++            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4);",
++            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4);",
++        ),
++        (
++            "    *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
++            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickFadeOutFromCtxTimer.c": [
++        (
++            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4);",
++            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4);",
++        ),
++        (
++            "    *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
++            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickFadeOutFromObjTimer.c": [
++        (
++            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14);",
++            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14);",
++        ),
++        (
++            "    *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14) = OS_GetTick();",
++            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickFadeInFromObjTimer.c": [
++        (
++            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14);",
++            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14);",
++        ),
++        (
++            "    *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14) = OS_GetTick();",
++            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_WaitLoadThenBuildMenu.c": [
++        (
++            "        *(long long *)(data_ov000_0205ac28 + 0x14) = stamp;",
++            "        kh_write_s64_le_unaligned(data_ov000_0205ac28 + 0x14, stamp);",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickBootFadeIn.c": [
++        (
++            "        context->llTimestamp = OS_GetTick();",
++            "        kh_write_u64_le_unaligned((u8 *)context + 0x4c64, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_MenuFadeInState.c": [
++        (
++            "        ctx->enterTick = OS_GetTick();",
++            "        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickMenuLoop.c": [
++        (
++            "        ctx->enterTick = OS_GetTick();",
++            "        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());",
++        ),
++        (
++            "    if (func_02020368((OS_GetTick() - ctx->enterTick) << 6, 0x01ff6210, 0) > 0x69) {",
++            "    if (func_02020368((OS_GetTick() - kh_read_s64_le_unaligned((u8 *)ctx + 0x4c64)) << 6, 0x01ff6210, 0) > 0x69) {",
++        ),
++    ],
++    "src/overlays/scenes/ov000_title/Ov000_TickTagTrackerNodes.c": [
++        (
++            "        *(unsigned long long *)(e + 0x14) += now - *(unsigned long long *)(e + 0x1c);\n"
++            "        *(unsigned long long *)(e + 0x1c) = now;\n"
++            "        if (*(unsigned long long *)(e + 0x14) <= *(unsigned long long *)(e + 0xc)) continue;",
++            "        {\n"
++            "            unsigned long long accum = kh_read_u64_le_unaligned((void *)(e + 0x14));\n"
++            "            accum += now - kh_read_u64_le_unaligned((void *)(e + 0x1c));\n"
++            "            kh_write_u64_le_unaligned((void *)(e + 0x14), accum);\n"
++            "            kh_write_u64_le_unaligned((void *)(e + 0x1c), now);\n"
++            "            if (accum <= kh_read_u64_le_unaligned((void *)(e + 0xc))) continue;\n"
++            "        }",
++        ),
++        (
++            "        *(unsigned long long *)(e + 0x14) =\n"
++            "            func_02020374(*(unsigned long long *)(e + 0x14), *(unsigned long long *)(e + 0xc));",
++            "        kh_write_u64_le_unaligned((void *)(e + 0x14),\n"
++            "            func_02020374(kh_read_u64_le_unaligned((void *)(e + 0x14)),\n"
++            "                             kh_read_u64_le_unaligned((void *)(e + 0xc))));",
++        ),
++    ],
++}
++
++R19_HITS = []
++
++
++def unaligned_title_u64(text, relp):
++    rules = TITLE_U64_UNALIGNED.get(relp)
++    if not rules:
++        return text
++    for old, new in rules:
++        count = text.count(old)
++        if count < 1:
++            raise SystemExit(f"prep R19: expected title u64 access in {relp}: {old!r}")
++        text = text.replace(old, new)
++    R19_HITS.append(relp)
++    return '#include "platform/kh_unaligned.h"\n' + text
++
+@@ -529,3 +645,4 @@
+                 new = rename_symbols(new)
+                 new = unaligned_record_lengths(new, relp)
++                new = unaligned_title_u64(new, relp)
+                 new = itcm_data_literals(new, relp)
+@@ -583,3 +700,4 @@
+           f"{len(R16_HITS)} geometry register pointers routed to the engine (R16); "
+           f"{len(R17_FILES)} data files aligned (R17); "
+-          f"{len(R18_HITS)} packed record walkers made alignment-safe (R18)")
++          f"{len(R18_HITS)} packed record walkers made alignment-safe (R18); "
++          f"{len(R19_HITS)} title timer sources made 64-bit alignment-safe (R19)")
+diff --git a/ps2/include/platform/kh_platform.h b/ps2/include/platform/kh_platform.h
+--- a/ps2/include/platform/kh_platform.h
++++ b/ps2/include/platform/kh_platform.h
+@@ -123,3 +123,5 @@
+ KhFile  *kh_file_open(const char *path, int write); /* absolute or boot-relative */
+ int32_t  kh_file_read(KhFile *f, void *dst, uint32_t size);
++/* Positional read: does not change the caller-visible logical file position. */
++int32_t  kh_file_read_at(KhFile *f, uint32_t offset, void *dst, uint32_t size);
+ int32_t  kh_file_write(KhFile *f, const void *src, uint32_t size);
+diff --git a/ps2/src/platform/ps2_vfs.c b/ps2/src/platform/ps2_vfs.c
+--- a/ps2/src/platform/ps2_vfs.c
++++ b/ps2/src/platform/ps2_vfs.c
+@@ -16,2 +16,3 @@
+- * Each open file has a read-ahead buffer: the game's own loader reads 512-byte blocks, which
+- * would otherwise become 512-byte device transactions.
++ * Each open read file has two 128 KiB read-ahead windows.  This matters for planar stereo
++ * streams whose left/right channel cursors are far apart in one file: one window would thrash
++ * on every alternating channel read on real USB/storage hardware.
+@@ -34,11 +35,19 @@
+ #define READAHEAD (128 * 1024)
++#define READ_WINDOWS 2
++
++typedef struct KhReadWindow {
++    uint32_t pos;
++    uint32_t len;
++    uint32_t age;
++    uint8_t *data;
++} KhReadWindow;
+ 
+ struct KhFile {
+     int fd;
+     int writable;
+     uint32_t size;
+     uint32_t pos;          /* logical position */
+-    uint32_t buf_pos;      /* file offset of buf[0] */
+-    uint32_t buf_len;      /* valid bytes in buf */
+-    uint8_t *buf;
++    uint32_t cache_age;
++    uint8_t *cache;
++    KhReadWindow win[READ_WINDOWS];
+ };
+@@ -171,4 +180,3 @@
+ static int io_open(const char *p, int fl, int mode) { int w = kh_io_begin(); int r = open(p, fl, mode); kh_io_end(w); return r; }
+-static int io_read(int fd, void *b, unsigned n) { int w = kh_io_begin(); int r = (int)read(fd, b, n); kh_io_end(w); return r; }
+ static int io_write(int fd, const void *b, unsigned n) { int w = kh_io_begin(); int r = (int)write(fd, b, n); kh_io_end(w); return r; }
+ static off_t io_lseek(int fd, off_t o, int wh) { int w = kh_io_begin(); off_t r = lseek(fd, o, wh); kh_io_end(w); return r; }
+@@ -206,55 +214,113 @@
+     if (!write) {
++        int i;
+         off_t sz = io_lseek(fd, 0, SEEK_END);
+         io_lseek(fd, 0, SEEK_SET);
+         f->size = sz < 0 ? 0 : (uint32_t)sz;
+-        f->buf = kh_alloc(READAHEAD, 64, KH_LIFE_GLOBAL, KH_MEM_FILE_CACHE);
++        f->cache = kh_alloc(READAHEAD * READ_WINDOWS, 64, KH_LIFE_GLOBAL, KH_MEM_FILE_CACHE);
++        if (f->cache) {
++            for (i = 0; i < READ_WINDOWS; i++)
++                f->win[i].data = f->cache + i * READAHEAD;
++        }
+     }
+     return f;
+ }
+ 
+-static int raw_read(KhFile *f, uint32_t off, void *dst, uint32_t n)
++/* The device's file position is shared by lseek/read, so the pair must live in one I/O
++ * critical region.  Do not implement this in terms of io_lseek()+io_read(): that would
++ * release ownership between the two operations. */
++static int raw_read_at(KhFile *f, uint32_t off, void *dst, uint32_t n)
+ {
+-    if (io_lseek(f->fd, (off_t)off, SEEK_SET) < 0)
+-        return -1;
+-    return (int)io_read(f->fd, dst, n);
++    int w = kh_io_begin();
++    int r;
++    if (lseek(f->fd, (off_t)off, SEEK_SET) < 0)
++        r = -1;
++    else
++        r = (int)read(f->fd, dst, n);
++    kh_io_end(w);
++    return r;
+ }
+ 
+-int32_t kh_file_read(KhFile *f, void *dst, uint32_t size)
++static KhReadWindow *find_window(KhFile *f, uint32_t pos)
+ {
+-    uint8_t *d = dst;
+-    uint32_t done = 0;
++    int i;
++    for (i = 0; i < READ_WINDOWS; i++) {
++        KhReadWindow *w = &f->win[i];
++        if (w->data && w->len && pos >= w->pos && pos < w->pos + w->len) {
++            w->age = ++f->cache_age;
++            return w;
++        }
++    }
++    return NULL;
++}
+ 
+-    if (f->pos >= f->size)
++static KhReadWindow *pick_window(KhFile *f)
++{
++    int i;
++    KhReadWindow *oldest = NULL;
++    for (i = 0; i < READ_WINDOWS; i++) {
++        KhReadWindow *w = &f->win[i];
++        if (!w->data)
++            continue;
++        if (!w->len)
++            return w;
++        if (!oldest || w->age < oldest->age)
++            oldest = w;
++    }
++    return oldest;
++}
++
++int32_t kh_file_read_at(KhFile *f, uint32_t offset, void *dst, uint32_t size)
++{
++    uint8_t *d = dst;
++    uint32_t pos = offset;
++    uint32_t done = 0;
++
++    if (!f || f->writable || pos >= f->size)
+         return 0;
+-    if (size > f->size - f->pos)
+-        size = f->size - f->pos;
++    if (size > f->size - pos)
++        size = f->size - pos;
++
+     kh_prof_begin(KH_PROF_LOAD);
+     while (done < size) {
+         uint32_t want = size - done;
+-        if (f->pos >= f->buf_pos && f->pos < f->buf_pos + f->buf_len) {
+-            uint32_t avail = f->buf_pos + f->buf_len - f->pos;
++        KhReadWindow *w = find_window(f, pos);
++        if (w) {
++            uint32_t avail = w->pos + w->len - pos;
+             uint32_t n = want < avail ? want : avail;
+-            memcpy(d + done, f->buf + (f->pos - f->buf_pos), n);
++            memcpy(d + done, w->data + (pos - w->pos), n);
+             done += n;
+-            f->pos += n;
+-        } else if (want >= READAHEAD || !f->buf) {
++            pos += n;
++        } else if (want >= READAHEAD || !f->cache) {
+             /* big read: straight into the destination, no copy */
+-            int r = raw_read(f, f->pos, d + done, want);
++            int r = raw_read_at(f, pos, d + done, want);
+             if (r <= 0)
+                 break;
+             done += (uint32_t)r;
+-            f->pos += (uint32_t)r;
++            pos += (uint32_t)r;
+         } else {
+-            /* refill aligned to 2 KiB so device transfers stay sector-aligned */
+-            uint32_t start = f->pos & ~2047u;
+-            int r = raw_read(f, start, f->buf, READAHEAD);
+-            if (r <= 0 || start + (uint32_t)r <= f->pos)
++            /* Refill the unused/LRU window.  Keep the device-friendly 2 KiB alignment. */
++            uint32_t start = pos & ~2047u;
++            KhReadWindow *victim = pick_window(f);
++            int r;
++            if (!victim)
+                 break;
+-            f->buf_pos = start;
+-            f->buf_len = (uint32_t)r;
++            r = raw_read_at(f, start, victim->data, READAHEAD);
++            if (r <= 0 || start + (uint32_t)r <= pos)
++                break;
++            victim->pos = start;
++            victim->len = (uint32_t)r;
++            victim->age = ++f->cache_age;
+         }
+     }
+     kh_prof_end(KH_PROF_LOAD);
+     return (int32_t)done;
+ }
+ 
++int32_t kh_file_read(KhFile *f, void *dst, uint32_t size)
++{
++    int32_t r = kh_file_read_at(f, f->pos, dst, size);
++    if (r > 0)
++        f->pos += (uint32_t)r;
++    return r;
++}
++
+@@ -290,7 +356,7 @@
+     if (!f)
+         return 0;
+     r = io_close(f->fd);
+-    kh_free(f->buf);
++    kh_free(f->cache);
+     kh_free(f);
+     return r < 0 ? r : 0;
+ }
+diff --git a/ps2/src/nitro/nitro_fs.c b/ps2/src/nitro/nitro_fs.c
+--- a/ps2/src/nitro/nitro_fs.c
++++ b/ps2/src/nitro/nitro_fs.c
+@@ -57,4 +57,4 @@
+-    if (!g_pak || kh_file_seek(g_pak, pos) < 0 || kh_file_read(g_pak, dst, size) != (int32_t)size) {
++    if (!g_pak || kh_file_read_at(g_pak, pos, dst, size) != (int32_t)size) {
+         KH_ERR("fs", "rom read failed: pos 0x%x size 0x%x", (unsigned)pos, (unsigned)size);
+         return FS_RESULT_ERROR;
+     }
+diff --git a/ps2/src/platform/ps2_internal.h b/ps2/src/platform/ps2_internal.h
+--- a/ps2/src/platform/ps2_internal.h
++++ b/ps2/src/platform/ps2_internal.h
+@@ -19,5 +19,8 @@
+ /* GS VRAM accounting (ps2_gs.c) */
+ uint32_t ps2_gs_vram_used(void);
+ uint32_t ps2_gs_vram_total(void);
++/* Draw an exception screen through the port's 16-bit FIELD renderer.  Returns 0 if video
++ * is not initialized yet, so the caller can fall back to libdebug. */
++int ps2_gs_crash_screen(const char *title, const char *const *lines, int count);
+ 
+ #endif
+diff --git a/ps2/src/platform/ps2_gs.c b/ps2/src/platform/ps2_gs.c
+--- a/ps2/src/platform/ps2_gs.c
++++ b/ps2/src/platform/ps2_gs.c
+@@ -42,2 +42,3 @@
+ static int g_w = 640, g_h = 448;
++static int g_pal;
+ static int g_fbp[2], g_zbp, g_draw;
+@@ -45,1 +46,2 @@
+ static int g_flip_pending;
++static int g_video_ready;
+@@ -312,2 +314,3 @@
+     g_w = 640;
+     g_h = pal ? 512 : 448;
++    g_pal = pal;
+@@ -338,2 +341,3 @@
+     g_draw = 0;
++    g_video_ready = 1;
+     KH_INFO("gs", "%s %dx%d 16-bit field mode, VRAM fixed %u KiB, texture pool %u KiB", pal ? "PAL" : "NTSC",
+@@ -350,1 +354,33 @@
+ int kh_video_height(void) { return g_h; }
++
++int ps2_gs_crash_screen(const char *title, const char *const *lines, int count)
++{
++    int i;
++    if (!g_video_ready || !g_frame_pkt[g_draw].base)
++        return 0;
++
++    /* Reassert the exact display mode used by the game.  libdebug's init_scr() assumes its own
++     * PSMCT32 framebuffer at VRAM 0; the port normally displays PSMCT16 full-height FIELD buffers,
++     * so using libdebug after a late game exception can produce a blue/patterned screen instead
++     * of readable registers on real GS hardware. */
++    graph_set_mode(GRAPH_MODE_INTERLACED,
++                   g_pal ? GRAPH_MODE_PAL : GRAPH_MODE_NTSC,
++                   GRAPH_MODE_FIELD, GRAPH_ENABLE);
++    graph_set_screen(0, 0, g_w, g_h);
++    graph_set_bgcolor(0, 0, 0);
++    graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
++    graph_enable_output();
++
++    kh_video_begin_frame(0x000018);
++    kh_video_debug_text(16, 16, 0xffffff, "%s", title ? title : "PS2 crash");
++    for (i = 0; i < count && i < 12; i++)
++        kh_video_debug_text(16, 40 + i * 16, 0xffffff, "%s", lines[i]);
++    kh_video_debug_text(16, 40 + count * 16 + 16, 0xffffff,
++                        "Map EPC/RA with build/khdays-ps2.map");
++    kh_video_submit_frame();
++
++    /* Show exactly the buffer just drawn; do not depend on the normal flip state machine. */
++    graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
++    graph_enable_output();
++    return 1;
++}
+diff --git a/ps2/src/platform/ps2_crash.c b/ps2/src/platform/ps2_crash.c
+--- a/ps2/src/platform/ps2_crash.c
++++ b/ps2/src/platform/ps2_crash.c
+@@ -19,5 +19,6 @@
+ static int crash_handler(EE_RegFrame *f)
+ {
+     int code = (int)((f->cause >> 2) & 31);
+     static char line[6][96];
++    const char *screen_line[6];
+     int i;
+@@ -34,14 +35,19 @@
+     snprintf(line[5], sizeof line[5], "status %08x cause %08x", (unsigned)f->status, (unsigned)f->cause);
+-    for (i = 0; i < 6; i++)
++    for (i = 0; i < 6; i++) {
++        screen_line[i] = line[i];
+         printf("CRASH %s\n", line[i]);
++    }
+ 
+-    init_scr();
+-    scr_clear();
+-    scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - crash\n\n");
+-    for (i = 0; i < 6; i++)
+-        scr_printf("  %s\n", line[i]);
+-    scr_printf("\n  Map EPC/RA to functions with build/khdays-ps2.map.\n");
++    if (!ps2_gs_crash_screen("Kingdom Hearts 358/2 Days (PS2) - crash", screen_line, 6)) {
++        /* Very early exception, before kh_video_init(): retain the SDK fallback. */
++        init_scr();
++        scr_clear();
++        scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - crash\n\n");
++        for (i = 0; i < 6; i++)
++            scr_printf("  %s\n", line[i]);
++        scr_printf("\n  Map EPC/RA to functions with build/khdays-ps2.map.\n");
++    }
+     for (;;)
+-        ;
++        SleepThread();
+     return 0;
+ }

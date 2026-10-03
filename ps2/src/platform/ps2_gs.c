@@ -40,9 +40,11 @@ extern const unsigned char msx[];  /* 8x8 font from the SDK's libdebug */
 #define Z_PSM  GS_PSMZ_16
 
 static int g_w = 640, g_h = 448;
+static int g_pal;
 static int g_fbp[2], g_zbp, g_draw;
 static int g_fontbp, g_fontclut;
 static int g_flip_pending;
+static int g_video_ready;
 static uint32_t g_vram_top;         /* first byte above fixed allocations */
 static KhGsPacket g_frame_pkt[2];
 
@@ -311,6 +313,7 @@ int kh_video_init(KhVideoMode mode)
         pal = (mode == KH_VIDEO_PAL);
     g_w = 640;
     g_h = pal ? 512 : 448;
+    g_pal = pal;
 
     dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
     dma_channel_fast_waits(DMA_CHANNEL_GIF);
@@ -336,6 +339,7 @@ int kh_video_init(KhVideoMode mode)
     kh_gs_packet_init(&g_frame_pkt[0], KH_GS_FRAME_QWORDS);
     kh_gs_packet_init(&g_frame_pkt[1], KH_GS_FRAME_QWORDS);
     g_draw = 0;
+    g_video_ready = 1;
     KH_INFO("gs", "%s %dx%d 16-bit field mode, VRAM fixed %u KiB, texture pool %u KiB", pal ? "PAL" : "NTSC",
             g_w, g_h, g_vram_top / 1024, (GS_VRAM_BYTES - g_vram_top) / 1024);
     return 0;
@@ -348,6 +352,38 @@ uint64_t kh_gs_zbuf_value(int mask_writes) { return GS_SET_ZBUF(g_zbp / 2048, Z_
 /* the largest Z value the Z buffer holds (the 3D projection scales into 0..this) */
 float kh_gs_z_max(void) { return 65535.0f; }
 int kh_video_height(void) { return g_h; }
+
+int ps2_gs_crash_screen(const char *title, const char *const *lines, int count)
+{
+    int i;
+    if (!g_video_ready || !g_frame_pkt[g_draw].base)
+        return 0;
+
+    /* Reassert the exact display mode used by the game.  libdebug's init_scr() assumes its own
+     * PSMCT32 framebuffer at VRAM 0; the port normally displays PSMCT16 full-height FIELD buffers,
+     * so using libdebug after a late game exception can produce a blue/patterned screen instead
+     * of readable registers on real GS hardware. */
+    graph_set_mode(GRAPH_MODE_INTERLACED,
+                   g_pal ? GRAPH_MODE_PAL : GRAPH_MODE_NTSC,
+                   GRAPH_MODE_FIELD, GRAPH_ENABLE);
+    graph_set_screen(0, 0, g_w, g_h);
+    graph_set_bgcolor(0, 0, 0);
+    graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
+    graph_enable_output();
+
+    kh_video_begin_frame(0x000018);
+    kh_video_debug_text(16, 16, 0xffffff, "%s", title ? title : "PS2 crash");
+    for (i = 0; i < count && i < 12; i++)
+        kh_video_debug_text(16, 40 + i * 16, 0xffffff, "%s", lines[i]);
+    kh_video_debug_text(16, 40 + count * 16 + 16, 0xffffff,
+                        "Map EPC/RA with build/khdays-ps2.map");
+    kh_video_submit_frame();
+
+    /* Show exactly the buffer just drawn; do not depend on the normal flip state machine. */
+    graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
+    graph_enable_output();
+    return 1;
+}
 
 /* TEX0 that reads the frame being drawn as a PSMCT32 texture (1024x512 addressing) */
 uint64_t kh_gs_frame_tex0(void) { return GS_SET_TEX0(g_fbp[g_draw] / 64, g_w / 64, FB_PSM, 10, 9, 1, 0, 0, 0, 0, 0, 0); }

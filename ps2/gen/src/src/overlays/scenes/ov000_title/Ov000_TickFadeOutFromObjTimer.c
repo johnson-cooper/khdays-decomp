@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/overlays/scenes/ov000_title/Ov000_TickFadeOutFromObjTimer.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Same fade-out ramp as Ov000_TickFadeOutFromCtxTimer, but driven from a small object's timestamp
  * at +0x14 rather than the big context's +0x4ae4. Pairs with Ov000_TickFadeInFromObjTimer on that
  * same object. Fade ramp: 16 steps over 0x4cb51 ticks (0x4cb51 / 0x4cb5 = 15.97), driven through
@@ -20,14 +21,14 @@ extern int kh_rt_ll_udiv_w_32(u64 value, u32 divisor, int mode);
 
 void Ov000_TickFadeOutFromObjTimer(void) {
     u64 elapsed =
-        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14);
+        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14);
 
     SetMasterBrightnessSub(-kh_rt_ll_udiv_w_32(elapsed, 0x4cb5, 0));
     if (elapsed <= 0x4cb51) {
         return;
     }
 
-    *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14) = OS_GetTick();
+    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14, OS_GetTick());
     SetMasterBrightnessSub(-16);
     {
         OverlayContext *context = data_ov000_0205ac28;

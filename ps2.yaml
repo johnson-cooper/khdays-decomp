@@ -9274,7 +9274,7 @@ targets:
       - src/overlays/scenes/ov000_title/Ov000_BackupWrite.c
       - src/overlays/scenes/ov000_title/Ov000_Backup_WriteChunked.c
       - src/overlays/scenes/ov000_title/Ov000_BeginCardTransfer.c
-      - src/overlays/scenes/ov000_title/Ov000_BeginSaveCheck.c
+      - ps2/gen/src/src/overlays/scenes/ov000_title/Ov000_BeginSaveCheck.c
       - src/overlays/scenes/ov000_title/Ov000_BlitOrClearMainTileRegion.c
       - src/overlays/scenes/ov000_title/Ov000_BlitOrClearTileRegion.c
       - src/overlays/scenes/ov000_title/Ov000_BlitTileRequest.c
@@ -9482,7 +9482,7 @@ targets:
       - src/overlays/scenes/ov000_title/Ov000_TeardownSubScene.c
       - src/overlays/scenes/ov000_title/Ov000_TeardownTitle.c
       - src/overlays/scenes/ov000_title/Ov000_TeardownTitleScene.c
-      - src/overlays/scenes/ov000_title/Ov000_TickBootFadeIn.c
+      - ps2/gen/src/src/overlays/scenes/ov000_title/Ov000_TickBootFadeIn.c
       - ps2/gen/src/src/overlays/scenes/ov000_title/Ov000_TickBootFadeTransition.c
       - ps2/gen/src/src/overlays/scenes/ov000_title/Ov000_TickBootTeardown.c
       - ps2/gen/src/src/overlays/scenes/ov000_title/Ov000_TickFadeInFromObjTimer.c
@@ -9523,7 +9523,7 @@ targets:
       - src/overlays/scenes/ov000_title/Ov000_VerifySaveSignature.c
       - src/overlays/scenes/ov000_title/Ov000_VerifySha1Signature.c
       - src/overlays/scenes/ov000_title/Ov000_WaitLaunchedSceneThenMenu.c
-      - src/overlays/scenes/ov000_title/Ov000_WaitLoadThenBuildMenu.c
+      - ps2/gen/src/src/overlays/scenes/ov000_title/Ov000_WaitLoadThenBuildMenu.c
       - src/overlays/scenes/ov000_title/Ov000_WaitSubMenuResult.c
       - src/overlays/scenes/ov000_title/Ov000_WaitSubSceneThenMenu.c
       - src/overlays/scenes/ov000_title/Ov000_Widget_HitTest.c

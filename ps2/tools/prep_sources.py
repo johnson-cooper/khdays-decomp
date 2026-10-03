@@ -64,6 +64,9 @@ the original.  Every rule is mechanical and listed here:
   R18 the cloned GetVarRecordByIndex functions walk even-sized, length-prefixed message records.
       ARMv5's LDR accepts their 2-mod-4 length fields (with rotate semantics); EE lw raises AdEL.
       Read those little-endian fields bytewise through kh_read_s32_le_unaligned instead.
+  R19 title-scene 64-bit timers reconstructed at offsets that are only 4-byte aligned are
+      accessed through kh_unaligned.h.  R5900 ld/sd require 8-byte alignment; the DS layout
+      and -fpack-struct=4 ABI stay untouched.
   R15 literal ITCM addresses of data embedded in ITCM code (0x01ff8000-0x01ffffff is the top of
       EE RAM, the main thread's stack) become the PS2 definitions of that data, listed in
       ITCM_DATA (ps2/src/nitro/nitro_itcm_data.c), e.g. G3D's texture-matrix builder tables.
@@ -269,6 +272,119 @@ def unaligned_record_lengths(text, relp):
 
 
 R18_HITS = []
+
+TITLE_U64_UNALIGNED = {
+    "src/overlays/scenes/ov000_title/Ov000_BeginSaveCheck.c": [
+        (
+            "    *(unsigned long long *)(data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
+            "    kh_write_u64_le_unaligned(data_ov000_0205ac24 + 0x4ae4, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickFadeThenEnterState2.c": [
+        (
+            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4);",
+            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4);",
+        ),
+        (
+            "    *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
+            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickFadeOutFromCtxTimer.c": [
+        (
+            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4);",
+            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4);",
+        ),
+        (
+            "    *(u64 *)((u8 *)data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
+            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac24 + 0x4ae4, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickFadeOutFromObjTimer.c": [
+        (
+            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14);",
+            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14);",
+        ),
+        (
+            "    *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14) = OS_GetTick();",
+            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickFadeInFromObjTimer.c": [
+        (
+            "        OS_GetTick() - *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14);",
+            "        OS_GetTick() - kh_read_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14);",
+        ),
+        (
+            "    *(u64 *)((u8 *)data_ov000_0205ac28 + 0x14) = OS_GetTick();",
+            "    kh_write_u64_le_unaligned((u8 *)data_ov000_0205ac28 + 0x14, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_WaitLoadThenBuildMenu.c": [
+        (
+            "        *(long long *)(data_ov000_0205ac28 + 0x14) = stamp;",
+            "        kh_write_s64_le_unaligned(data_ov000_0205ac28 + 0x14, stamp);",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickBootFadeIn.c": [
+        (
+            "        context->llTimestamp = OS_GetTick();",
+            "        kh_write_u64_le_unaligned((u8 *)context + 0x4c64, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_MenuFadeInState.c": [
+        (
+            "        ctx->enterTick = OS_GetTick();",
+            "        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickMenuLoop.c": [
+        (
+            "        ctx->enterTick = OS_GetTick();",
+            "        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());",
+        ),
+        (
+            "    if (func_02020368((OS_GetTick() - ctx->enterTick) << 6, 0x01ff6210, 0) > 0x69) {",
+            "    if (func_02020368((OS_GetTick() - kh_read_s64_le_unaligned((u8 *)ctx + 0x4c64)) << 6, 0x01ff6210, 0) > 0x69) {",
+        ),
+    ],
+    "src/overlays/scenes/ov000_title/Ov000_TickTagTrackerNodes.c": [
+        (
+            "        *(unsigned long long *)(e + 0x14) += now - *(unsigned long long *)(e + 0x1c);\n"
+            "        *(unsigned long long *)(e + 0x1c) = now;\n"
+            "        if (*(unsigned long long *)(e + 0x14) <= *(unsigned long long *)(e + 0xc)) continue;",
+            "        {\n"
+            "            unsigned long long accum = kh_read_u64_le_unaligned((void *)(e + 0x14));\n"
+            "            accum += now - kh_read_u64_le_unaligned((void *)(e + 0x1c));\n"
+            "            kh_write_u64_le_unaligned((void *)(e + 0x14), accum);\n"
+            "            kh_write_u64_le_unaligned((void *)(e + 0x1c), now);\n"
+            "            if (accum <= kh_read_u64_le_unaligned((void *)(e + 0xc))) continue;\n"
+            "        }",
+        ),
+        (
+            "        *(unsigned long long *)(e + 0x14) =\n"
+            "            func_02020374(*(unsigned long long *)(e + 0x14), *(unsigned long long *)(e + 0xc));",
+            "        kh_write_u64_le_unaligned((void *)(e + 0x14),\n"
+            "            func_02020374(kh_read_u64_le_unaligned((void *)(e + 0x14)),\n"
+            "                             kh_read_u64_le_unaligned((void *)(e + 0xc))));",
+        ),
+    ],
+}
+
+R19_HITS = []
+
+
+def unaligned_title_u64(text, relp):
+    rules = TITLE_U64_UNALIGNED.get(relp)
+    if not rules:
+        return text
+    for old, new in rules:
+        count = text.count(old)
+        if count < 1:
+            raise SystemExit(f"prep R19: expected title u64 access in {relp}: {old!r}")
+        text = text.replace(old, new)
+    R19_HITS.append(relp)
+    return '#include "platform/kh_unaligned.h"\n' + text
 
 
 def zero_globals(text):
@@ -519,6 +635,7 @@ def main():
                 new = CLZ_BLOCK.sub(lambda m: f"{m.group(1)} = kh_clz({m.group(2)});", new)
                 new = REG_PIN.sub(r"\1", new)
                 new = ARR_ASSIGN.sub(lambda m: f"__builtin_memcpy((void *)({m.group(3)}), (const void *)({m.group(4)}), sizeof({m.group(1)}[{m.group(2)}]));", new)
+                new = unaligned_title_u64(new, relp)
                 new = apply_variants(new, variants.get(relp, ()))
                 code_only = re.sub(r"/\*.*?\*/|//[^\n]*", " ", text, flags=re.S)
                 for name, addr in HW_SEMANTIC_NAMES.items():
@@ -582,7 +699,8 @@ def main():
           f"{len(R14_HITS)} variadic argument blocks rebuilt (R14); "
           f"{len(R16_HITS)} geometry register pointers routed to the engine (R16); "
           f"{len(R17_FILES)} data files aligned (R17); "
-          f"{len(R18_HITS)} packed record walkers made alignment-safe (R18)")
+          f"{len(R18_HITS)} packed record walkers made alignment-safe (R18); "
+          f"{len(R19_HITS)} title timer sources made 64-bit alignment-safe (R19)")
     for h in R16_HITS:
         print("  R16", h)
 

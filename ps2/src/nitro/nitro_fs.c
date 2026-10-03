@@ -54,7 +54,7 @@ static int rom_read(FSArchive *arc, void *dst, u32 pos, u32 size)
     (void)arc;
     if (size >= 0x1000 && kh_vblank_count() < KH_BOOT_TRACE_VBLANKS)
         KH_INFO("fs", "read pos 0x%x size 0x%x -> %p", (unsigned)pos, (unsigned)size, dst);
-    if (!g_pak || kh_file_seek(g_pak, pos) < 0 || kh_file_read(g_pak, dst, size) != (int32_t)size) {
+    if (!g_pak || kh_file_read_at(g_pak, pos, dst, size) != (int32_t)size) {
         KH_ERR("fs", "rom read failed: pos 0x%x size 0x%x", (unsigned)pos, (unsigned)size);
         return FS_RESULT_ERROR;
     }

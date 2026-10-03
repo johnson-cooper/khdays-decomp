@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/overlays/scenes/ov000_title/Ov000_TickMenuLoop.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Ov000_TickMenuLoop -- the ov000 menu's interactive loop.
  *
  * The state Ov000_MenuFadeInState hands off to once the fade-in finishes, and the one the
@@ -170,9 +171,9 @@ StateFn Ov000_TickMenuLoop(void) {
     }
 
     if (ctx->inputReady != 0 && gPadHeld != 0) {
-        ctx->enterTick = OS_GetTick();
+        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());
     }
-    if (kh_rt_ll_udiv_w((OS_GetTick() - ctx->enterTick) << 6, 0x01ff6210, 0) > 0x69) {
+    if (kh_rt_ll_udiv_w((OS_GetTick() - kh_read_s64_le_unaligned((u8 *)ctx + 0x4c64)) << 6, 0x01ff6210, 0) > 0x69) {
         Table_TailCallWithEntry(0, 0x1e);
         ctx->counter = 0;
         return (StateFn)Ov000_FadeOutAndStartMovie;

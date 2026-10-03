@@ -20,6 +20,7 @@ static int crash_handler(EE_RegFrame *f)
 {
     int code = (int)((f->cause >> 2) & 31);
     static char line[6][96];
+    const char *screen_line[6];
     int i;
 
     snprintf(line[0], sizeof line[0], "EE exception %d: %s", code, k_cause[code] ? k_cause[code] : "?");
@@ -32,17 +33,22 @@ static int crash_handler(EE_RegFrame *f)
     snprintf(line[4], sizeof line[4], "t0 %08x t1 %08x t2 %08x t3 %08x gp %08x fp %08x",
              f->t0[0], f->t1[0], f->t2[0], f->t3[0], f->gp[0], f->fp[0]);
     snprintf(line[5], sizeof line[5], "status %08x cause %08x", (unsigned)f->status, (unsigned)f->cause);
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < 6; i++) {
+        screen_line[i] = line[i];
         printf("CRASH %s\n", line[i]);
+    }
 
-    init_scr();
-    scr_clear();
-    scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - crash\n\n");
-    for (i = 0; i < 6; i++)
-        scr_printf("  %s\n", line[i]);
-    scr_printf("\n  Map EPC/RA to functions with build/khdays-ps2.map.\n");
+    if (!ps2_gs_crash_screen("Kingdom Hearts 358/2 Days (PS2) - crash", screen_line, 6)) {
+        /* Very early exception, before kh_video_init(): retain the SDK fallback. */
+        init_scr();
+        scr_clear();
+        scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - crash\n\n");
+        for (i = 0; i < 6; i++)
+            scr_printf("  %s\n", line[i]);
+        scr_printf("\n  Map EPC/RA to functions with build/khdays-ps2.map.\n");
+    }
     for (;;)
-        ;
+        SleepThread();
     return 0;
 }
 

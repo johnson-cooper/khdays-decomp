@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/overlays/scenes/ov000_title/Ov000_TickTagTrackerNodes.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Ov000_TickTagTrackerNodes -- advance every armed node of a tag-tracker table by elapsed real time.
  *
  * Each node (0x30 bytes, built by BuildTagTrackerNode) cycles through a list of
@@ -62,9 +63,13 @@ void Ov000_TickTagTrackerNodes(int param_1) {
         if (*(volatile unsigned short *)(e + 4) >= *(unsigned short *)(e + 2) - 1 &&
             *(int *)(e + 8) == 1) continue;
 
-        *(unsigned long long *)(e + 0x14) += now - *(unsigned long long *)(e + 0x1c);
-        *(unsigned long long *)(e + 0x1c) = now;
-        if (*(unsigned long long *)(e + 0x14) <= *(unsigned long long *)(e + 0xc)) continue;
+        {
+            unsigned long long accum = kh_read_u64_le_unaligned((void *)(e + 0x14));
+            accum += now - kh_read_u64_le_unaligned((void *)(e + 0x1c));
+            kh_write_u64_le_unaligned((void *)(e + 0x14), accum);
+            kh_write_u64_le_unaligned((void *)(e + 0x1c), now);
+            if (accum <= kh_read_u64_le_unaligned((void *)(e + 0xc))) continue;
+        }
 
         *(volatile unsigned short *)(e + 4) = *(volatile unsigned short *)(e + 4) + 1;
         if (*(volatile unsigned short *)(e + 4) >= *(unsigned short *)(e + 2)) {
@@ -90,7 +95,8 @@ void Ov000_TickTagTrackerNodes(int param_1) {
         if (swap != 0) {
             (*(void (**)(int))(param_1 + 0x44))(saved);
         }
-        *(unsigned long long *)(e + 0x14) =
-            func_02020374(*(unsigned long long *)(e + 0x14), *(unsigned long long *)(e + 0xc));
+        kh_write_u64_le_unaligned((void *)(e + 0x14),
+            func_02020374(kh_read_u64_le_unaligned((void *)(e + 0x14)),
+                             kh_read_u64_le_unaligned((void *)(e + 0xc))));
     }
 }

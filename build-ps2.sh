@@ -15,6 +15,7 @@
 #   4. gen_link.py      - .bss layouts, data aliases, overlay ids, stubs for missing SDK functions
 #   5. ps2build build   - link
 # Any failure stops the script with the tool's own error output.
+trap 'echo "An error occurred!"; read -p "Press Enter to close..." ' EXIT
 set -eu
 cd "$(dirname "$0")"
 

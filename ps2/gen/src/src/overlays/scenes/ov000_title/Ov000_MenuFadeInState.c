@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/overlays/scenes/ov000_title/Ov000_MenuFadeInState.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Ov000_MenuFadeInState -- fade the ov000 menu back in after a re-entry.
  *
  * The state Ov000_HandoffState hands control to on a non-fresh entry into scene 1, i.e.
@@ -92,7 +93,7 @@ StateFn Ov000_MenuFadeInState(void) {
         Ov000_RegisterLogoObjects();
         Camera_CommitMatricesEx(ctx->scrollBounds, 0x3b33, -0x3b33, -0x4d9a, 0x4d9a);
         Scene_DrawNode(ctx->node);
-        ctx->enterTick = OS_GetTick();
+        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());
         return (StateFn)Ov000_TickMenuLoop;
     }
 
@@ -126,7 +127,7 @@ StateFn Ov000_MenuFadeInState(void) {
     Scene_DrawNode(ctx->node);
     Sequence_UpdateTracks(ctx->node, 0x1000);
     if ((BuildSlotMask(ctx->node, 0x1000) & 1) != 0) {
-        ctx->enterTick = OS_GetTick();
+        kh_write_s64_le_unaligned((u8 *)ctx + 0x4c64, OS_GetTick());
         return (StateFn)Ov000_TickMenuLoop;
     }
     ctx->counter = ctx->counter + 1;

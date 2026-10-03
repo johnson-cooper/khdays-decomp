@@ -122,6 +122,8 @@ int      kh_vfs_init(int argc, char **argv);
 void     kh_vfs_resolve(const char *rel, char *out, size_t outsz);
 KhFile  *kh_file_open(const char *path, int write); /* absolute or boot-relative */
 int32_t  kh_file_read(KhFile *f, void *dst, uint32_t size);
+/* Positional read: does not change the caller-visible logical file position. */
+int32_t  kh_file_read_at(KhFile *f, uint32_t offset, void *dst, uint32_t size);
 int32_t  kh_file_write(KhFile *f, const void *src, uint32_t size);
 int32_t  kh_file_seek(KhFile *f, uint32_t pos);
 uint32_t kh_file_tell(KhFile *f);
