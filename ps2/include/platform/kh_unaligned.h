@@ -34,16 +34,12 @@ static inline int32_t kh_read_s32_le_unaligned(const void *ptr)
     return (int32_t)kh_read_u32_le_unaligned(ptr);
 }
 
-/* Alignment-1 lvalue wrappers for prepared decomp code.  Using these preserves ordinary
- * C lvalue semantics (reads, writes and compound assignments) while preventing GCC from
- * assuming an 8-byte-aligned address merely because the original source cast to u64/s64 *. */
-typedef struct __attribute__((packed, may_alias)) {
-    uint64_t value;
-} kh_unaligned_u64_slot;
-
-typedef struct __attribute__((packed, may_alias)) {
-    int64_t value;
-} kh_unaligned_s64_slot;
+/* Alignment-1 scalar aliases for prepared decomp code.  GCC permits a typedef's aligned
+ * attribute to reduce alignment.  Casting to these types preserves normal scalar lvalue
+ * semantics (reads, writes, compound assignments, address-of, sizeof) while preventing the
+ * compiler from assuming an arbitrary Nintendo DS field is naturally 8-byte aligned. */
+typedef uint64_t kh_unaligned_u64 __attribute__((aligned(1), may_alias));
+typedef int64_t  kh_unaligned_s64 __attribute__((aligned(1), may_alias));
 
 static inline uint64_t kh_read_u64_le_unaligned(const void *ptr)
 {
