@@ -23,6 +23,7 @@
 #include "platform/ps2/ps2_gs.h"
 
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
 #include <gs_gp.h>
 #include <gs_psm.h>

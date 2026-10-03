@@ -189,13 +189,13 @@ void kh_panic(const char *fmt, ...)
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
     kh_log(KH_LOG_ERROR, "PANIC", "%s", msg);
-    kh_log_flush();
 
-    /* Keep a GS-independent copy on the console too.  A late panic can be the reason the GS
-     * is unhealthy, so diagnostics must not exist only in the framebuffer. */
+    /* Keep a GS-independent copy on the console before any explicit file flush.  A panic may
+     * itself involve the IOP/filesystem, so do not make diagnostics depend on that flush. */
     fprintf(stderr, "PANIC %s\n", msg);
     fflush(stderr);
     fflush(stdout);
+    kh_log_flush();
 
     /* Once video is live, libdebug's init_scr() is NOT a safe fallback: it assumes a PSMCT32
      * framebuffer at VRAM 0, while the game runs full-height PSMCT16 FIELD buffers.  On real GS
