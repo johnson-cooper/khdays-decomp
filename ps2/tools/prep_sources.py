@@ -276,7 +276,7 @@ def unaligned_record_lengths(text, relp):
 
 R18_HITS = []
 
-TITLE_U64_UNALIGNED = {
+R19_U64_UNALIGNED = {
     "src/overlays/scenes/ov000_title/Ov000_BeginSaveCheck.c": [
         (
             "    *(unsigned long long *)(data_ov000_0205ac24 + 0x4ae4) = OS_GetTick();",
@@ -372,19 +372,25 @@ TITLE_U64_UNALIGNED = {
             "                             kh_read_u64_le_unaligned((void *)(e + 0xc))));",
         ),
     ],
+    "src/overlays/enemies/ov171_enemy_grey_caprice/Ov171_CarryReleaseTick.c": [
+        (
+            "    if ((*(u64 *)((char *)state[3] + 0x464) & 0x8000) != 0) {",
+            "    if ((kh_read_u64_le_unaligned((u8 *)state[3] + 0x464) & 0x8000) != 0) {",
+        ),
+    ],
 }
 
 R19_HITS = []
 
 
-def unaligned_title_u64(text, relp):
-    rules = TITLE_U64_UNALIGNED.get(relp)
+def unaligned_r5900_u64(text, relp):
+    rules = R19_U64_UNALIGNED.get(relp)
     if not rules:
         return text
     for old, new in rules:
         count = text.count(old)
         if count < 1:
-            raise SystemExit(f"prep R19: expected title u64 access in {relp}: {old!r}")
+            raise SystemExit(f"prep R19: expected reviewed u64 access in {relp}: {old!r}")
         text = text.replace(old, new)
     R19_HITS.append(relp)
     return '#include "platform/kh_unaligned.h"\n' + text
@@ -705,7 +711,7 @@ def main():
                 new = CLZ_BLOCK.sub(lambda m: f"{m.group(1)} = kh_clz({m.group(2)});", new)
                 new = REG_PIN.sub(r"\1", new)
                 new = ARR_ASSIGN.sub(lambda m: f"__builtin_memcpy((void *)({m.group(3)}), (const void *)({m.group(4)}), sizeof({m.group(1)}[{m.group(2)}]));", new)
-                new = unaligned_title_u64(new, relp)
+                new = unaligned_r5900_u64(new, relp)
                 new = apply_variants(new, variants.get(relp, ()))
                 code_only = re.sub(r"/\*.*?\*/|//[^\n]*", " ", text, flags=re.S)
                 for name, addr in HW_SEMANTIC_NAMES.items():
