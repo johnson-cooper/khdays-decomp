@@ -45,6 +45,13 @@ int Scene_AdvanceToPending(void)
             }
         }
 
+        if (((int *)s->obj)[5] == -2) {
+            /* This mark is intentionally before Instance_ReleaseIfDead(): that helper destroys
+             * protected scene objects synchronously.  If teardown itself stalls, the watchdog
+             * must still tell us that the dispatcher reached the release boundary. */
+            kh_debug_mark("scene advance: release dead", s->pendId, ((int *)s->obj)[0]);
+        }
+
         if (Instance_ReleaseIfDead(s->obj) != 0) {
             kh_debug_stage("scene advance: current is dead", s->curId, s->pendId);
             if (s->entry->overlayId != -1) {
