@@ -15,20 +15,29 @@ static int g_stage_a;
 static int g_stage_b;
 #endif
 
-void kh_debug_stage(const char *stage, int a, int b)
+void kh_debug_mark(const char *stage, int a, int b)
 {
 #if KH_PS2_DEBUG
     extern volatile const char *kh_watchdog_mark;
     static char mark[160];
-    static char detail[160];
-    const char *lines[2];
 
     snprintf(g_stage, sizeof g_stage, "%s", stage ? stage : "(null)");
     g_stage_a = a;
     g_stage_b = b;
-
     snprintf(mark, sizeof mark, "%s a=%d b=%d", g_stage, a, b);
     kh_watchdog_mark = mark;
+#else
+    (void)stage; (void)a; (void)b;
+#endif
+}
+
+void kh_debug_stage(const char *stage, int a, int b)
+{
+#if KH_PS2_DEBUG
+    static char detail[160];
+    const char *lines[2];
+
+    kh_debug_mark(stage, a, b);
 
     snprintf(detail, sizeof detail, "%s   a=%d   b=%d", g_stage, a, b);
     lines[0] = detail;
