@@ -1,10 +1,11 @@
-/* PS2 override: begin the New Game fade without synchronously opening a bridge stream.
+/* PS2 override: consume New Game confirmation before touching another title-frame draw.
  *
- * Stream 3 is a short title-to-opening transition cue.  Starting it is optional to scene state,
- * but NitroSystem opens and prepares it synchronously in the frame that consumes result 5.  A
- * physical-device refill can therefore stop the entire frame loop before any fade is visible.
- * Keep fading the title stream and enter the normal transition state; the opening scene starts
- * and owns its audio through the regular scene path.
+ * The DS path starts/stops streamed audio synchronously in the frame that consumes result 5.
+ * On PS2 physical storage that can wait behind a refill mutex, leaving the difficulty screen
+ * visibly frozen even though the user's Yes input was accepted.
+ *
+ * Read result 5 first, publish the title transition immediately, and request the title stream
+ * fade through the PS2 non-blocking stream-stop helper.  The helper never sleeps on USB/MMCE I/O.
  */
 #include "nitro/types.h"
 
@@ -31,34 +32,35 @@ extern void func_02023ad0(int handle);
 extern void Ov000_PreloadLogoResources(void);
 extern void Ov000_Title_CreateLogoObjects(void);
 extern void Ov000_ReleaseLogoResources(void);
-extern void Table_TailCallWithEntry(int slot, int frames);
+extern void kh_ps2_snd_stop_slot_nonblocking(int slot, int frames);
 extern void Ov000_ReentryState(void);
 extern void Ov000_TickBootFadeTransition(void);
 
 OverlayCallback Ov000_WaitSubMenuResult(void)
 {
     OverlayContext *context = NNSi_FndGetCurrentRootHeap();
+    int result = Ov000_GetSubSceneResult();
+
+    /* Once Yes has published result 5, do not run one more menu update/draw before leaving. */
+    if (result == 5) {
+        context->state_0 = 0;
+        context->transition_flag = 1;
+        kh_ps2_snd_stop_slot_nonblocking(0, 30);
+        return Ov000_TickBootFadeTransition;
+    }
 
     KeyRepeat_Step(context->overlay_image);
     Ov000_SetSubSceneHalf1C(Mem_ReadU16(context->overlay_image));
     Scene_DrawNode(context->update_object);
 
-    switch (Ov000_GetSubSceneResult()) {
-    case 4:
+    if (result == 4) {
         func_02023ad0(context->sharing_handle);
         context->sharing_handle = context->sharing_state = 0;
         Ov000_PreloadLogoResources();
         Ov000_Title_CreateLogoObjects();
         Ov000_ReleaseLogoResources();
         return Ov000_ReentryState;
-    case 5:
-        context->state_0 = 0;
-        context->transition_flag = 1;
-
-        /* Do not synchronously start the optional stream-3 bridge on physical hardware. */
-        Table_TailCallWithEntry(0, 30);
-        return Ov000_TickBootFadeTransition;
-    default:
-        return 0;
     }
+
+    return 0;
 }

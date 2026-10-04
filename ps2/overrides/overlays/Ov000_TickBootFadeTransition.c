@@ -1,9 +1,9 @@
-/* PS2 override: retain the title fade but bound the wait for its streamed music to stop.
+/* PS2 override: retain the title fade without ever blocking on streamed-audio teardown.
  *
- * The stock transition starts a 16-frame stream fade at frame 0x30 and then waits forever for
- * the handle to disappear.  Force-stop it after a further 16 frames.  ForceStopStrm drains any
- * in-flight refill and invalidates the handle before the scene is allowed to change, so this is
- * safe for the stream buffers while removing an unbounded title-screen soft lock.
+ * The stock transition waits for stream slot 1 to disappear.  On DS the stop tears the player
+ * down synchronously; on PS2 a physical USB/MMCE refill can own the stream mutex for much longer.
+ * Use the PS2 non-blocking stop helper instead.  A completed fade invalidates the public handle
+ * immediately, and frame 0x40 is a hard logical-stop fallback, so this state cannot wait forever.
  */
 #include "nitro/types.h"
 #include "game/engine.h"
@@ -26,7 +26,7 @@ extern void Ov000_FadeStateHookNoOp(void);
 extern void Camera_CommitMatricesEx(void *bounds, int right, int left, int top, int bottom);
 extern void Scene_DrawNode(void *renderNode);
 extern void G2x_SetBlendBrightness_(u32 registerAddress, int planeMask, int brightness);
-extern void Table_TailCallWithEntry(int first, int second);
+extern void kh_ps2_snd_stop_slot_nonblocking(int slot, int frames);
 extern void func_02023ad0(void *handle);
 extern void Ov000_BootDispatch(void);
 
@@ -55,9 +55,9 @@ Ov000StateFn Ov000_TickBootFadeTransition(void)
         SetMasterBrightnessSub(-0x10);
 
         if (context->frame == 0x30)
-            Table_TailCallWithEntry(1, 0x10);
+            kh_ps2_snd_stop_slot_nonblocking(1, 0x10);
         else if (context->frame == 0x40 && SoundStrm_HasPlaybackPos(1) != 0)
-            Table_TailCallWithEntry(1, 0);
+            kh_ps2_snd_stop_slot_nonblocking(1, 0);
 
         if (SoundStrm_HasPlaybackPos(1) == 0) {
             context->frame = 0;

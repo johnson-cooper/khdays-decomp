@@ -5,9 +5,15 @@
  * card refill is short.  A real PS2 USB/MMCE read can be much longer; taking that mutex from the
  * scene thread then freezes the whole transition (notably New Game after the difficulty prompt).
  *
- * A faded/finished player is already silent.  Try the teardown without waiting; if the worker is
- * still filling one buffer, leave the handle valid and retry next frame.  Immediate explicit
- * stops still use the original blocking ForceStopStrm_2 path, preserving its synchronous API.
+ * There are two parts to preserving the DS-visible behaviour without that wait:
+ *   1. once a stream is logically finished, invalidate its public handle immediately so callers
+ *      waiting on NNS_SndArcStrmGetCurrentPlayingPos observe "stopped" on the same frame;
+ *   2. retry the physical teardown with try-locks until the refill worker releases its mutex.
+ *
+ * A faded/finished player is already silent by the time its handle is detached.  Explicit scene
+ * transition stops use kh_ps2_snd_stop_slot_nonblocking below: a real fade is armed through the
+ * original non-blocking fade path, while an immediate/fallback stop only detaches the handle and
+ * opportunistically tears the player down.  No title/menu frame is allowed to block on storage.
  */
 #include "nitro/types.h"
 #include "nitro/os_types.h"
@@ -17,6 +23,7 @@ extern const s16 data_02041488[128];
 extern NNSSndStrmPlayer data_0204b62c[4];
 extern NNSSndStrmThread data_0204b140;
 extern NNSSndStrmThread *sPrepareThread;
+extern char *gSoundMgr;
 
 extern int OS_TryLockMutex(OSMutex *mutex);
 extern void OS_UnlockMutex(OSMutex *mutex);
@@ -27,10 +34,19 @@ extern void NNS_SndStrmSetVolume(NNSSndStrm *stream, int volume);
 extern int NNSi_SndFaderGet(const NNSSndFader *fader);
 extern void NNSi_SndFaderUpdate(NNSSndFader *fader);
 extern BOOL NNSi_SndFaderIsFinished(const NNSSndFader *fader);
+extern void SNDi_FreeVoiceChannel(NNSSndStrmPlayer *player, int fadeFrame);
 
 static s16 calc_decibel(int scale)
 {
     return data_02041488[scale];
+}
+
+static void detach_handle(NNSSndStrmPlayer *player)
+{
+    if (player->handle != NULL) {
+        player->handle->player = NULL;
+        player->handle = NULL;
+    }
 }
 
 static BOOL try_force_stop(NNSSndStrmPlayer *player)
@@ -56,6 +72,34 @@ static BOOL try_force_stop(NNSSndStrmPlayer *player)
     return TRUE;
 }
 
+/* Scene-transition stop that is safe to call from the game thread on slow physical media.
+ *
+ * For a live player and a non-zero fade, SNDi_FreeVoiceChannel only arms the fader; its blocking
+ * branch is entered when the player is not playing or fadeFrame == 0, both of which we avoid.
+ * Immediate/fallback stops make the handle invalid first, then try cleanup without sleeping.
+ */
+void kh_ps2_snd_stop_slot_nonblocking(int slot, int fadeFrame)
+{
+    NNSSndStrmHandle *handle;
+    NNSSndStrmPlayer *player;
+
+    if (gSoundMgr == NULL || slot < 0 || slot >= NNS_SND_STRM_PLAYER_NUM)
+        return;
+
+    handle = (NNSSndStrmHandle *)(gSoundMgr + 0xb44bc + slot * 4);
+    player = handle->player;
+    if (player == NULL)
+        return;
+
+    if (fadeFrame > 0 && player->playFlag) {
+        SNDi_FreeVoiceChannel(player, fadeFrame);
+        return;
+    }
+
+    detach_handle(player);
+    (void)try_force_stop(player);
+}
+
 void NNSi_SndArcStrmMain(void)
 {
     int playerNo;
@@ -68,6 +112,7 @@ void NNSi_SndArcStrmMain(void)
             continue;
 
         if (player->finishCounter == 0) {
+            detach_handle(player);
             (void)try_force_stop(player);
             continue;
         }
@@ -90,7 +135,9 @@ void NNSi_SndArcStrmMain(void)
             player->volume = volume;
         }
 
-        if (player->fadeOutFlag && NNSi_SndFaderIsFinished(&player->fader))
+        if (player->fadeOutFlag && NNSi_SndFaderIsFinished(&player->fader)) {
+            detach_handle(player);
             (void)try_force_stop(player);
+        }
     }
 }
