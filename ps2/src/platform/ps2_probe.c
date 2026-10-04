@@ -33,19 +33,11 @@ void kh_debug_mark(const char *stage, int a, int b)
 
 void kh_debug_stage(const char *stage, int a, int b)
 {
-#if KH_PS2_DEBUG
-    static char detail[160];
-    const char *lines[2];
-
+    /* Stage probes used to draw a full-screen GS report immediately.  That was useful during
+     * early bring-up, but it also overwrote the game's own output and could perturb VIF/GIF/GS
+     * state during the opening -> field handoff.  Keep the same call sites as lightweight
+     * breadcrumbs only; a real sustained stall is displayed by the watchdog. */
     kh_debug_mark(stage, a, b);
-
-    snprintf(detail, sizeof detail, "%s   a=%d   b=%d", g_stage, a, b);
-    lines[0] = detail;
-    lines[1] = "If this remains on screen, the next call did not return.";
-    ps2_gs_crash_screen("KH Days PS2 - transition probe", lines, 2);
-#else
-    (void)stage; (void)a; (void)b;
-#endif
 }
 
 void kh_debug_stage_overlay(void)
