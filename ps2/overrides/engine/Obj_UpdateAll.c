@@ -8,8 +8,10 @@
  * .data on its first frame. */
 
 #include "game/engine.h"
+#include "platform/kh_platform.h"
 
 extern int gObjSystem[];
+extern void kh_debug_mark(const char *stage, int a, int b);
 
 typedef int (*ObjStateFn)(void *self);
 
@@ -33,16 +35,34 @@ void Obj_UpdateAll(int paused)
             break;
         default:
             if (paused == 0 || (obj[0] & 4)) {
-                int arena = Heap_SetCurrent(obj[7]);
-                ObjStateFn fn = (ObjStateFn)((int *)gObjSystem[1])[5];
+                /*
+                 * Keep the object being updated in a local and re-publish it after the callback.
+                 * A number of scene helpers instantiate/destroy temporary objects and therefore
+                 * touch gObjSystem[1].  The DS implementations restore it before returning, but
+                 * one missed restore in a PS2 compatibility path made the callback result land in
+                 * the wrong object.  The calendar then requested SCENE_FIELD but its own state was
+                 * never latched to -2, leaving a live main loop parked forever on the DAY card.
+                 *
+                 * Using the saved object is equivalent to the DS path when the global is intact,
+                 * and makes the object-manager invariant explicit on the EE.
+                 */
+                int *running = obj;
+                int arena = Heap_SetCurrent(running[7]);
+                ObjStateFn fn = (ObjStateFn)running[5];
                 int cb = fn((void *)fn);
 
                 Heap_SetCurrent(arena);
+                gObjSystem[1] = (int)running;
                 if (cb != 0) {
-                    ((int *)gObjSystem[1])[5] = cb;
+                    running[5] = cb;
+                    if (cb == -2) {
+                        kh_debug_mark("object state: dead", 
+                                      *(unsigned short *)((char *)running + 0x10),
+                                      *(unsigned short *)((char *)running + 0x12));
+                    }
                 }
             }
-            next = ((int *)gObjSystem[1])[3];
+            next = obj[3];
             break;
         }
         gObjSystem[1] = next;
