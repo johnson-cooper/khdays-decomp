@@ -36,10 +36,13 @@ int Scene_AdvanceToPending(void)
     static int lastPend;
 
     if (s->obj != 0) {
-        if (s->pendId != 0 && (lastObj != s->obj || lastPend != s->pendId)) {
-            lastObj = s->obj;
-            lastPend = s->pendId;
-            kh_debug_stage("scene advance: release current?", s->curId, s->pendId);
+        if (s->pendId != 0) {
+            int state = ((int *)s->obj)[5];
+            if (lastObj != s->obj || lastPend != s->pendId) {
+                lastObj = s->obj;
+                lastPend = s->pendId;
+                kh_debug_mark("scene advance: pending/current", s->pendId, state);
+            }
         }
 
         if (Instance_ReleaseIfDead(s->obj) != 0) {
