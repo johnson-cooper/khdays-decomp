@@ -7,6 +7,7 @@
  */
 #include "nitro/types.h"
 #include "game/engine.h"
+#include "platform/ps2/decomp_prefix.h"
 
 typedef void (*Ov000StateFn)(void);
 
@@ -25,7 +26,7 @@ extern Ov000BootContext *NNSi_FndGetCurrentRootHeap(void);
 extern void Ov000_FadeStateHookNoOp(void);
 extern void Camera_CommitMatricesEx(void *bounds, int right, int left, int top, int bottom);
 extern void Scene_DrawNode(void *renderNode);
-extern void G2x_SetBlendBrightness_(u32 registerAddress, int planeMask, int brightness);
+extern void G2x_SetBlendBrightness_(unsigned short *dst, unsigned int attr, int value);
 extern void kh_ps2_snd_stop_slot_nonblocking(int slot, int frames);
 extern void func_02023ad0(void *handle);
 extern void Ov000_BootDispatch(void);
@@ -40,18 +41,27 @@ Ov000StateFn Ov000_TickBootFadeTransition(void)
     Scene_DrawNode(context->renderNode);
 
     if (context->frame <= 0x20) {
+        kh_watchdog_mark = "newgame: brightness fade";
         SetMasterBrightnessMain(context->frame / 2);
         SetMasterBrightnessSub(context->frame / 2);
     } else if (context->frame < 0x28) {
-        *(volatile u32 *)0x04001000 = *(volatile u32 *)0x04001000 & ~0x1f00 | 0x1200;
+        kh_watchdog_mark = "newgame: sub display switch";
+        /*
+         * This is a PS2 override, so prep_sources.py never rewrites literal DS MMIO
+         * addresses for us.  Touch the PS2-side DS display shadow instead of the real
+         * EE address 0x04001000, which is unmapped on hardware and bus-errors here.
+         */
+        volatile u32 *sub_dispcnt = (volatile u32 *)(kh_ds_io + 0x1000);
+        *sub_dispcnt = (*sub_dispcnt & ~0x1f00u) | 0x1200u;
     } else if (context->frame < 0x30) {
-        G2x_SetBlendBrightness_(0x04000050, 3, 0x10);
-        G2x_SetBlendBrightness_(0x04001050, 0x12, 0x10);
+        kh_watchdog_mark = "newgame: blend fade";
+        G2x_SetBlendBrightness_((unsigned short *)(kh_ds_io + 0x50), 3, 0x10);
+        G2x_SetBlendBrightness_((unsigned short *)(kh_ds_io + 0x1050), 0x12, 0x10);
         SetMasterBrightnessMain((-(context->frame - 0x28)) << 1);
         SetMasterBrightnessSub((-(context->frame - 0x28)) << 1);
     } else {
-        *(volatile u16 *)0x04000050 = 0;
-        *(volatile u16 *)0x04001050 = 0;
+        *(volatile u16 *)(kh_ds_io + 0x50) = 0;
+        *(volatile u16 *)(kh_ds_io + 0x1050) = 0;
         SetMasterBrightnessMain(-0x10);
         SetMasterBrightnessSub(-0x10);
 
