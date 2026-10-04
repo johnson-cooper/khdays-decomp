@@ -88,8 +88,14 @@ fi
 # static archives have circular references, so patch the generated Ninja target to
 # put --end-group at the end of its libs response-file value.
 "$PY" ps2/tools/fix_ps2build_link_group.py || die "fix_ps2build_link_group.py failed"
-echo "== [5/6] ps2build build"
-ps2build build || die "ps2build build failed (errors above)"
+echo "== [5/6] ninja build"
+# Do not call `ps2build build` here. That command regenerates build/build.ninja before
+# invoking Ninja, which would erase fix_ps2build_link_group.py's post-response-file
+# -Wl,--end-group injection and make ld fail with "missing --end-group".
+SDK=$(dirname "$(command -v ps2build)")
+NINJA="$SDK/tools/ninja"
+[ -x "$NINJA" ] || [ -x "$NINJA.exe" ] || NINJA=ninja
+"$NINJA" -C build || die "ninja build failed (errors above)"
 echo "== [6/6] auditing R5900 64-bit loads/stores"
 "$PY" ps2/tools/audit_r5900_ldsd.py || die "R5900 ld/sd alignment audit failed"
 ls -l build/bin/*.elf
