@@ -251,6 +251,12 @@ void KhNitro_PresentFrame(void)
 {
     GXi_FlushCommandList();   /* whatever G3D still buffers belongs to this frame */
     kh_nitro_render_frame();  /* 2D compositor + 3D triangles -> GS packet */
+#if KH_PS2_DEBUG
+    {
+        extern void kh_debug_stage_overlay(void);
+        kh_debug_stage_overlay();
+    }
+#endif
     kh_video_submit_frame();
     kh_prof_frame();
     kh_loadprof_frame();
