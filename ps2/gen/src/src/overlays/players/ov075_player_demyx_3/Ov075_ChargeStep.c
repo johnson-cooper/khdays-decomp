@@ -1,0 +1,95 @@
+/* PS2: mechanically prepared copy of src/overlays/players/ov075_player_demyx_3/Ov075_ChargeStep.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
+/* Charge step of the ov036 enemy (x4: ov036/054/074/091): on the local player both 64-bit flag
+ * words at +0x464 and +0x46c get bit 16; with a cached heading (+0x2abc) the node turns towards
+ * it (plus the +0x478 offset, clamped by the turn helper) unless the facing is locked and the
+ * enemy moves along it at the rig's speed (+0x2ec4); in the air bit 46 is raised and the
+ * vertical speed cleared; the actor's hook decides bit 1 of +0x694; from 0xc000 on the +0x7b0
+ * timer the bone effect spawns once (latched at +0x2d9c), a hit (bit 1 of +0x18) latches the
+ * rig's +0x2d98 marker, and an active enemy either hands over to state 0x23 (busy emitter and no
+ * marker) or stops, raises bit 2 and lands: state 0 with the slot callback when grounded, else
+ * state 2. */
+
+#include "nitro/types.h"
+#include "nitro/fx_types.h"
+#include "game/engine.h"
+
+typedef struct { unsigned char b0 : 1, b1 : 1; } Flags;
+
+extern int Ov022_ClampAngleTowardTarget(char *self, unsigned int angle);            /* Ov022_ClampAngleTowardTarget */
+extern void ScaleVec3Fx12(int scale, const VecFx32 *v, VecFx32 *out);            /* ScaleVec3Fx12 */
+extern void VEC_Add(const VecFx32 *a, const VecFx32 *b, VecFx32 *out);
+extern void Ov075_SpawnEffectAtBonePos(char *self);
+extern int Ov022_IsState9Or6WithFlag200(char *emitter);
+extern void *Ov022_ActorSetState(char *self, int state);
+extern char *data_ov075_020b9e20;
+extern short data_0203d210[];
+
+void *Ov075_ChargeStep(char *self)
+{
+    VecFx32 step;
+    VecFx32 flat;
+    char *rig = data_ov075_020b9e20 + 0x194 + 0x2c00;
+    void *next = 0;
+    int a;
+    unsigned int *node;
+    int r;
+
+    if (Session_GetLocalPlayerIndex() == 0) {
+        *(kh_unaligned_u64 *)(self + 0x464) |= 0x10000;
+    }
+    if (Session_GetLocalPlayerIndex() == 0) {
+        *(kh_unaligned_u64 *)(self + 0x46c) |= 0x10000;
+    }
+    step.z = 0;
+    step.y = 0;
+    step.x = 0;
+    if (*(int *)(self + 0x2abc) != -1) {
+        a = Ov022_ClampAngleTowardTarget(self, (u16)(*(int *)(self + 0x2abc) + *(short *)(self + 0x478)));
+        node = *(unsigned int **)(self + 0x20);
+        if ((*node & 0x20) == 0) {
+            *(u16 *)((char *)node + 0x80) = a + 0x8000;
+            *(u16 *)((char *)node + 4) |= 0x20;
+        }
+        step.x = -data_0203d210[(a >> 4) * 2];
+        step.z = -data_0203d210[(a >> 4) * 2 + 1];
+        step.y = 0;
+        ScaleVec3Fx12(*(int *)(rig + 0x130), &step, &step);
+    }
+    if ((*(int *)(self + 0x24) & 4) == 0) {
+        *(kh_unaligned_u64 *)self |= 0x400000000000ULL;
+        *(int *)(self + 0x58) = 0;
+    }
+    flat = step;
+    flat.y = 0;
+    VEC_Add((VecFx32 *)(self + 0x98 + 0x400), &flat, (VecFx32 *)(self + 0x98 + 0x400));
+    r = (*(int (**)(char *))(self + 0x668))(self);
+    ((Flags *)(self + 0x694))->b1 = (unsigned char)r;
+    if (*(int *)(rig + 8) == 0 && *(int *)(self + 0x7b0) >= 0xc000) {
+        Ov075_SpawnEffectAtBonePos(self);
+        *(int *)(rig + 8) = 1;
+    }
+    if ((*(u16 *)(self + 0x18) & 2) == 2) {
+        *(int *)(rig + 4) = 1;
+    }
+    if (((Flags *)(self + 0x694))->b1) {
+        if (Ov022_IsState9Or6WithFlag200(self + 0x2f8 + 0x2000) == 0 || *(int *)(rig + 4) == 1) {
+            *(int *)(self + 0x4a0) = 0;
+            *(int *)(self + 0x49c) = 0;
+            *(int *)(self + 0x498) = 0;
+            *(int *)(self + 0x6a0) = 0;
+            *(int *)(self + 0x69c) = 0;
+            *(int *)(self + 0x698) = 0;
+            *(kh_unaligned_u64 *)self |= 4;
+            if ((*(int *)(self + 0x24) & 4) != 0) {
+                next = Ov022_ActorSetState(self, 0);
+                (*(void (**)(char *, int))(self + 0x664))(self, 0);
+            } else {
+                next = Ov022_ActorSetState(self, 2);
+            }
+        } else {
+            next = Ov022_ActorSetState(self, 0x23);
+        }
+    }
+    return next;
+}

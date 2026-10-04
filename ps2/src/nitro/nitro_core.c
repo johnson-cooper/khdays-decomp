@@ -7,6 +7,7 @@
  * code never executes at interrupt level.
  */
 #include "platform/kh_platform.h"
+#include "platform/kh_loadprof.h"
 #include "nitro_internal.h"
 
 #include <string.h>
@@ -231,6 +232,7 @@ void KhNitro_PresentFrame(void)
     kh_nitro_render_frame();  /* 2D compositor + 3D triangles -> GS packet */
     kh_video_submit_frame();
     kh_prof_frame();
+    kh_loadprof_frame();
     kh_tex3d_frame_sent();    /* texture conversion scratch is free again */
     kh_tex3d_new_frame();
     kh_ge_end_frame();        /* SWAP_BUFFERS: the next frame's geometry starts empty */

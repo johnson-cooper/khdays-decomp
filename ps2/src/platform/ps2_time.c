@@ -68,7 +68,7 @@ static void vblank_wait(void);
 
 void kh_vblank_wait(void)
 {
-    int w = kh_io_begin();
+    int w = kh_io_begin_tag("VBlank wait");
     vblank_wait();
     kh_io_end(w);
 }

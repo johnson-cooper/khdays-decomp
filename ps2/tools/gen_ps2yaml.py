@@ -235,7 +235,9 @@ targets:
               "-Wl,--wrap=NNS_FndAllocFromExpHeapEx",
               "-Wl,--wrap=Ov107_SpawnEntityClass", "-Wl,--wrap=Ov002_CreateSlotObjectAndStart",
               "-Wl,--wrap=Ov002_RegisterEventSlot", "-Wl,--wrap=Ov002_HandleSeatMessage",
-              "-Wl,--wrap=Ov002_PopAndDispatchEvent", "-Wl,--wrap=FS_OpenFile"]
+              "-Wl,--wrap=Ov002_PopAndDispatchEvent", "-Wl,--wrap=FS_OpenFile",
+              "-Wl,--wrap=Scene_AdvanceToPending", "-Wl,--wrap=Ov000_WaitLoadThenBuildMenu",
+              "-Wl,--wrap=Ov000_BootRunSelector", "-Wl,--wrap=Ov000_InitSubScene"]
     libs:
 """)
     # The retention anchor extracts overlay members while the game archives are scanned.  Put

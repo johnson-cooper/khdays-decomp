@@ -121,6 +121,8 @@ int      kh_vfs_init(int argc, char **argv);
 /* Resolve a path relative to the boot directory ("ps2data/khdays.pak" -> "mass0:/khdays/ps2data/khdays.pak"). */
 void     kh_vfs_resolve(const char *rel, char *out, size_t outsz);
 KhFile  *kh_file_open(const char *path, int write); /* absolute or boot-relative */
+/* Independent small-cache handle for latency-sensitive archive streaming. */
+KhFile  *kh_file_open_stream(const char *path);
 int32_t  kh_file_read(KhFile *f, void *dst, uint32_t size);
 /* Positional read: does not change the caller-visible logical file position. */
 int32_t  kh_file_read_at(KhFile *f, uint32_t offset, void *dst, uint32_t size);
@@ -205,6 +207,7 @@ void kh_platform_restart(void);
  * thread that blocks there waits for a completion interrupt that can never come.  kh_io_begin()
  * enables interrupts if they were off and returns 1 then; kh_io_end() restores. */
 int  kh_io_begin(void);
+int  kh_io_begin_tag(const char *label);
 void kh_io_end(int was_off);       /* execute this ELF again (DS soft reset) */
 
 #ifdef __cplusplus

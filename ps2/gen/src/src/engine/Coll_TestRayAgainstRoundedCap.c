@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/engine/Coll_TestRayAgainstRoundedCap.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Downward ray intersection with the upper spherical object cap.
  * The hardware divider is drained on every path after the asynchronous start. */
 
@@ -19,8 +20,8 @@ extern s64 FX_GetDivResultFx64c(void);
 #define MUL(a,b) ((s32)(((s64)(a)*(b)+0x800)>>12))
 static inline void WaitDivider(void) { while(*(volatile u16*)((unsigned int)kh_ds_io + 0x280)&0x8000) {} }
 static inline void StartDivide(s32 numerator,s32 denominator) {
- *(u64*)((unsigned int)kh_ds_io + 0x290)=(u64)(u32)numerator<<32;
- *(u64*)((unsigned int)kh_ds_io + 0x298)=(u32)denominator;
+ *(kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x290)=(u64)(u32)numerator<<32;
+ *(kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x298)=(u32)denominator;
 }
 s32 Coll_TestRayAgainstRoundedCap(CollisionObject *object,CollCastState *query)
 {

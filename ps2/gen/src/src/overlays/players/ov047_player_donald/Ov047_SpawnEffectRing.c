@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/overlays/players/ov047_player_donald/Ov047_SpawnEffectRing.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Spawns the ov047 panel's effect instances around the actor. Builds a rotation matrix
  * from the link's facing angle -- biased by 0x8000 and folded to 12 bits to index the
  * shared sin/cos pair table -- then, for each instance, takes the next offset from a
@@ -116,7 +117,7 @@ void Ov047_SpawnEffectRing(char *self)
         }
 
         Ov022_SendPlacementMessage(self, &f.req);
-        if ((int)(*(long long *)self & 0x10000) == 0) {
+        if ((int)(*(kh_unaligned_s64 *)self & 0x10000) == 0) {
             *(self + 0x47a) = 3;
             *(self + 0x47b) = 0;
         }

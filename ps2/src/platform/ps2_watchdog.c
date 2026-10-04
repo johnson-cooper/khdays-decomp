@@ -8,10 +8,12 @@
  * evidence every 10 seconds while the stall continues.
  */
 #include "platform/kh_platform.h"
+#include "platform/kh_loadprof.h"
 #include "ps2_internal.h"
 
 #include <kernel.h>
 #include <stdio.h>
+#include <string.h>
 #include <debug.h>
 
 volatile uint32_t kh_watchdog_progress;
@@ -19,7 +21,8 @@ volatile const char *kh_watchdog_mark = "boot";
 
 #if KH_PS2_DEBUG
 static int g_sema = -1;
-static u8 g_stack[8 * 1024] __attribute__((aligned(16)));
+/* The diagnostic snapshot includes the bounded load trace; keep comfortable IRQ stack headroom. */
+static u8 g_stack[12 * 1024] __attribute__((aligned(16)));
 
 /* from the VBlank interrupt handler */
 void kh_watchdog_vblank(uint32_t vblank)
@@ -44,14 +47,24 @@ static const char *status_name(int s)
 static void report(uint32_t now, int screen)
 {
     extern void *volatile kh_io_site[64];
+    extern const char *volatile kh_io_label[64];
     extern void ps2_log_ring(const char *line);
     char line[160];
     int id;
 
     if (!screen) {
+        int lp;
         snprintf(line, sizeof line, "[W watchdog] main loop stalled (%u VBlank waits), last mark: %s\n",
                  (unsigned)now, kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
         ps2_log_ring(line);
+        for (lp = 0; lp < 4 && kh_loadprof_watchdog_line(lp, line, sizeof line - 1); lp++) {
+            size_t len = strlen(line);
+            if (len + 1 < sizeof line) {
+                line[len] = '\n';
+                line[len + 1] = 0;
+            }
+            ps2_log_ring(line);
+        }
     } else {
         /* Never call libdebug init_scr() after the game owns the GS.  It assumes a PSMCT32
          * framebuffer at VRAM 0, while this port uses full-height PSMCT16 FIELD buffers; on
@@ -66,14 +79,25 @@ static void report(uint32_t now, int screen)
                  kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
         lines[n] = text[n]; n++;
 
+        {
+            int lp;
+            for (lp = 0; lp < 4 && n < 12; lp++) {
+                if (!kh_loadprof_watchdog_line(lp, text[n], sizeof text[n]))
+                    break;
+                lines[n] = text[n];
+                n++;
+            }
+        }
+
         for (id = 1; id < 64 && n < 12; id++) {
             ee_thread_status_t st;
             if (ReferThreadStatus(id, &st) < 0 || !st.status)
                 continue;
             snprintf(text[n], sizeof text[n],
-                     "t%02d p%02d %-7s wait %d/%d at %p iop %p",
+                     "t%02d p%02d %-7s wait %d/%d at %p iop %p %s",
                      id, st.current_priority, status_name(st.status),
-                     st.waitType, st.waitId, st.func, kh_io_site[id]);
+                     st.waitType, st.waitId, st.func, kh_io_site[id],
+                     kh_io_label[id] ? (const char *)kh_io_label[id] : "-");
             lines[n] = text[n];
             n++;
         }
@@ -85,8 +109,9 @@ static void report(uint32_t now, int screen)
         ee_thread_status_t st;
         if (ReferThreadStatus(id, &st) < 0 || !st.status)
             continue;
-        snprintf(line, sizeof line, "  thread %2d prio %3d %-7s wait %d/%d at %p  iop %p\n", id,
-                 st.current_priority, status_name(st.status), st.waitType, st.waitId, st.func, kh_io_site[id]);
+        snprintf(line, sizeof line, "  thread %2d prio %3d %-7s wait %d/%d at %p iop %p %s\n", id,
+                 st.current_priority, status_name(st.status), st.waitType, st.waitId, st.func,
+                 kh_io_site[id], kh_io_label[id] ? (const char *)kh_io_label[id] : "-");
         ps2_log_ring(line);
     }
 }
@@ -99,9 +124,12 @@ static void watchdog_thread(void *arg)
     (void)arg;
     {
         extern void *volatile kh_io_site[64];
+        extern const char *volatile kh_io_label[64];
         int tid = GetThreadId();
-        if (tid > 0 && tid < 64)
+        if (tid > 0 && tid < 64) {
             kh_io_site[tid] = 0;    /* thread IDs can be reused; discard a stale previous owner */
+            kh_io_label[tid] = 0;
+        }
     }
     for (;;) {
         uint32_t now;

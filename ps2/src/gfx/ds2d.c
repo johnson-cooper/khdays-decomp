@@ -1099,6 +1099,14 @@ static void capture_blend_and_store(KhGsPacket *p, const Rect *r, u32 cap)
     int src = (int)((cap >> 29) & 3), evb = (int)((cap >> 8) & 31);
     u32 cbp = capture_addr();
     int x0 = (int)r->x, y0 = (int)r->y, x1 = (int)(r->x + r->w), y1 = (int)(r->y + r->h);
+#if KH_PS2_DEBUG
+    static u32 last_cap = 0xffffffffu;
+    if (cap != last_cap) {
+        KH_INFO("gs", "display capture %08x: src %d evb %d rect %d,%d-%d,%d GS word %x",
+                (unsigned)cap, src, evb, x0, y0, x1, y1, (unsigned)cbp);
+        last_cap = cap;
+    }
+#endif
 
     if (evb > 16)
         evb = 16;

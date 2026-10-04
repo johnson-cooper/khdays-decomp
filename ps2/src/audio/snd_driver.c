@@ -56,7 +56,7 @@ void snd_lock(void)
         g_lock_sema = CreateSema(&sm);
     }
     {
-        int w = kh_io_begin();
+        int w = kh_io_begin_tag("sound mixer lock");
         WaitSema(g_lock_sema);
         kh_io_end(w);
     }

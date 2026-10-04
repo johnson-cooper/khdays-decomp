@@ -13,6 +13,7 @@
  *     that matter -- the overlay's .bss is zeroed on every load -- and tracks what is loaded.
  */
 #include "platform/kh_platform.h"
+#include "platform/kh_loadprof.h"
 #include "nitro_internal.h"
 
 #include <string.h>
@@ -47,7 +48,11 @@ typedef struct KhPakHeader {
 } KhPakHeader;
 
 static KhFile *g_pak;
+static KhFile *g_stream_pak;
 static KhPakHeader g_hdr;
+#if KH_PS2_DEBUG
+static u32 *g_profile_fat;
+#endif
 
 static int rom_read(FSArchive *arc, void *dst, u32 pos, u32 size)
 {
@@ -65,6 +70,18 @@ static int rom_write(FSArchive *arc, const void *src, u32 pos, u32 size)
 {
     (void)arc; (void)src; (void)pos; (void)size;
     return FS_RESULT_FAILURE;
+}
+
+/* Streamed music uses a descriptor and cache independent from the main NitroFS archive.  The
+ * NitroSystem worker and game thread run concurrently; sharing g_pak would race its physical
+ * seek position and cache metadata. */
+s32 kh_nitrofs_read_stream(void *dst, u32 pos, u32 size)
+{
+    if (!g_stream_pak || kh_file_read_at(g_stream_pak, pos, dst, size) != (s32)size) {
+        KH_ERR("fs", "stream read failed: pos 0x%x size 0x%x", (unsigned)pos, (unsigned)size);
+        return -1;
+    }
+    return (s32)size;
 }
 
 /* archive proc: accept activate/idle (the DS locked the card bus there) */
@@ -166,10 +183,8 @@ int __wrap_FS_OpenFile(void *file, const char *path)
 #if KH_PS2_DEBUG
     extern volatile const char *kh_watchdog_mark;
     static char mark[96];
-    if (kh_vblank_count() < KH_BOOT_TRACE_VBLANKS) {
-        snprintf(mark, sizeof mark, "FS_OpenFile %s", path ? path : "(null)");
-        kh_watchdog_mark = mark;
-    }
+    snprintf(mark, sizeof mark, "FS_OpenFile %s", path ? path : "(null)");
+    kh_watchdog_mark = mark;
 #endif
     r = __real_FS_OpenFile(file, path);
 #if KH_PS2_DEBUG
@@ -187,12 +202,25 @@ static void open_pak(void)
         kh_panic("Game data not found: %s%s\n\n  Create it from your own Kingdom Hearts 358/2 Days ROM:\n"
                  "    python ps2/tools/make_ps2data.py your_rom.nds ps2data\n"
                  "  and copy the ps2data folder next to the ELF.", kh_vfs_boot_dir(), path);
+    g_stream_pak = kh_file_open_stream(path);
+    if (!g_stream_pak)
+        kh_panic("Cannot open the independent audio stream handle for %s", path);
     if (kh_file_read(g_pak, &g_hdr, sizeof g_hdr) != (int32_t)sizeof g_hdr || g_hdr.magic != PAK_MAGIC)
         kh_panic("%s is not a KH Days PS2 data pack (re-run make_ps2data.py)", path);
     if (g_hdr.version != 1)
         kh_panic("%s has pack version %u, this build needs 1 (re-run make_ps2data.py)", path, (unsigned)g_hdr.version);
     if (memcmp(g_hdr.gamecode, "YKGP", 4) != 0)
         kh_panic("%s contains %.4s data; this build targets European YKGP data", path, g_hdr.gamecode);
+#if KH_PS2_DEBUG
+    /* Keep the rewritten pack FAT in EE RAM so a stuck physical offset can be reported as the
+     * original NitroFS file id.  At 1595 entries this costs less than 13 KiB. */
+    g_profile_fat = kh_alloc(g_hdr.fat_size, 16, KH_LIFE_GLOBAL, KH_MEM_FILE_CACHE);
+    if (g_profile_fat &&
+        kh_file_read_at(g_pak, g_hdr.fat_offset, g_profile_fat, g_hdr.fat_size) == (int32_t)g_hdr.fat_size)
+        kh_loadprof_set_pack_fat((const uint32_t *)g_profile_fat, g_hdr.file_count);
+    else
+        KH_WARN("fs", "load profiler could not retain the pack FAT; traces will omit file ids");
+#endif
     KH_INFO("fs", "code target YKGP; data source %.4s: %u files, %u KiB", g_hdr.gamecode,
             (unsigned)g_hdr.file_count, (unsigned)(kh_file_size(g_pak) / 1024));
 #if KH_PS2_DEBUG

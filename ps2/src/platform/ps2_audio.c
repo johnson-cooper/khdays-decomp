@@ -84,7 +84,7 @@ static void audio_thread(void *arg)
         kh_prof_end(KH_PROF_AUDIO);
         for (;;) {
             int result;
-            int w = kh_io_begin();     /* (marks the wait for the hang watchdog) */
+            int w = kh_io_begin_tag("audio khsnd RPC");
             result = SifCallRpc(&g_rpc, KHSND_PUSH, 0, g_block, sizeof g_block,
                                 g_reply, sizeof g_reply, NULL, NULL);
             kh_io_end(w);

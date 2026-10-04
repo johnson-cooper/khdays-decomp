@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of libs/nitro/mtx/calls/MTX_OrthoW.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /*
  * Builds a frustum-style 4x4 projection matrix (the NitroSDK MTX_FrustumW shape:
  * a perspective frustum whose w row is scaled by scaleW).
@@ -41,8 +42,8 @@ typedef struct {
  * DIVCNT is deliberately not rewritten: FX_InvAsync already left it in 64/32 mode. */
 static inline void CP_SetDivImm64_64_NS_(u64 numerator, u64 denominator)
 {
-    *(u64 *)((unsigned int)kh_ds_io + 0x290) = numerator;
-    *(u64 *)((unsigned int)kh_ds_io + 0x298) = denominator;
+    *(kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x290) = numerator;
+    *(kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x298) = denominator;
 }
 
 static inline fx32 RoundFx64cToFx32(u64 v)

@@ -1,11 +1,12 @@
 /* PS2: mechanically prepared copy of libs/nitro/fx/auto/VEC_Distance.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 
 #include "nitro/types.h"
 #include "nitro/fx_types.h"
 
 #define SQRT_CONTROL (*(volatile u16 *)((unsigned int)kh_ds_io + 0x2b0))
 #define SQRT_RESULT (*(volatile fx32 *)((unsigned int)kh_ds_io + 0x2b4))
-#define SQRT_PARAMETER (*(volatile u64 *)((unsigned int)kh_ds_io + 0x2b8))
+#define SQRT_PARAMETER (*(volatile kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x2b8))
 
 fx32 VEC_Distance(const VecFx32 *a, const VecFx32 *b)
 {

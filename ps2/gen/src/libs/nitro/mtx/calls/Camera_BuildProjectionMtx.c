@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of libs/nitro/mtx/calls/Camera_BuildProjectionMtx.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /*
  * Builds a perspective 4x4 projection matrix (the NitroSDK MTX_PerspectiveW
  * shape: a vertical-FOV perspective whose w row is scaled by scaleW). Direct
@@ -42,8 +43,8 @@ typedef struct {
  * MTX_OrthoW.c's copy of CP_SetDivImm64_64_NS_. */
 static inline void CP_SetDivImm64_64_NS_(u64 numerator, u64 denominator)
 {
-    *(u64 *)((unsigned int)kh_ds_io + 0x290) = numerator;
-    *(u64 *)((unsigned int)kh_ds_io + 0x298) = denominator;
+    *(kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x290) = numerator;
+    *(kh_unaligned_u64 *)((unsigned int)kh_ds_io + 0x298) = denominator;
 }
 
 static inline fx32 RoundFx64cToFx32(u64 v)

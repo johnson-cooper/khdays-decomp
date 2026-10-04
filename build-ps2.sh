@@ -17,8 +17,19 @@
 #   4. gen_link.py      - .bss layouts, data aliases, overlay ids, stubs for missing SDK functions
 #   5. ps2build build   - link
 #   6. audit_r5900_ldsd.py - inspect emitted EE code for unsafe 64-bit accesses
-# Any failure stops the script with the tool's own error output.
-trap 'echo "An error occurred!"; read -p "Press Enter to close..." ' EXIT
+# Any failure stops the script with the tool's own error output.  The EXIT hook is also used when
+# launched by double-click on Windows, but must not turn a successful non-interactive build into a
+# failure just because stdin is already closed.
+pause_on_error() {
+    status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        echo "An error occurred!"
+        read -p "Press Enter to close..." || true
+    fi
+    exit "$status"
+}
+trap pause_on_error EXIT
 set -eu
 cd "$(dirname "$0")"
 

@@ -13,13 +13,16 @@
 /* where each EE thread is waiting on the IOP right now (return address of the waiting call),
  * for the hang watchdog's report */
 void *volatile kh_io_site[64];
+const char *volatile kh_io_label[64];
 
-int kh_io_begin(void)
+static int io_begin(const char *label, void *ra)
 {
     unsigned int status;
     int tid = GetThreadId();
-    if (tid > 0 && tid < 64)
-        kh_io_site[tid] = __builtin_return_address(0);
+    if (tid > 0 && tid < 64) {
+        kh_io_site[tid] = ra;
+        kh_io_label[tid] = label;
+    }
     __asm__ volatile("mfc0 %0, $12" : "=r"(status));
     if (status & 0x10000)               /* Status.EIE: interrupts on */
         return 0;
@@ -27,7 +30,6 @@ int kh_io_begin(void)
     {   /* report each call site once: these are the waits that hang real hardware */
         static void *seen[16];
         static int nseen;
-        void *ra = __builtin_return_address(0);
         int i;
         for (i = 0; i < nseen && seen[i] != ra; i++)
             ;
@@ -39,11 +41,16 @@ int kh_io_begin(void)
     return 1;
 }
 
+int kh_io_begin(void) { return io_begin("IOP/kernel wait", __builtin_return_address(0)); }
+int kh_io_begin_tag(const char *label) { return io_begin(label, __builtin_return_address(0)); }
+
 void kh_io_end(int was_off)
 {
     int tid = GetThreadId();
-    if (tid > 0 && tid < 64)
+    if (tid > 0 && tid < 64) {
         kh_io_site[tid] = 0;
+        kh_io_label[tid] = 0;
+    }
     if (was_off)
         DIntr();
 }

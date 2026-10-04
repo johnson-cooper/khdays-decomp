@@ -1,4 +1,5 @@
 /* PS2: mechanically prepared copy of src/overlays/scenes/ov008_camp_menu/Ov008_MissionSceneCtor.c (ps2/tools/prep_sources.py). Do not edit. */
+#include "platform/kh_unaligned.h"
 /* Ov008_MissionSceneCtor -- scene constructor.
  *
  * Allocates the char-select manager context (0x97f8 bytes) and stores it in the scene-object
@@ -118,7 +119,7 @@ void *Ov008_MissionSceneCtor(int arg) {
 
     base = data_ov008_02090fa4;
     anim = OS_GetTick();
-    *(long long *)((char *)base + 0x94c4) = anim;
+    *(kh_unaligned_s64 *)((char *)base + 0x94c4) = anim;
     *(signed char *)((char *)base + 0x950c) = -1;
     if (arg != 0) {
         *(int *)(OBJ + 0x94f4) = 0xd;

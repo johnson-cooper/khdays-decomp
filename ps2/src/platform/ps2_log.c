@@ -75,7 +75,7 @@ static void flush_locked(void)
     g_log_synced = kh_vblank_count();
     if (!g_logbuf_len || !g_log_ok)
         return;
-    w = kh_io_begin();
+    w = kh_io_begin_tag("log file flush");
     fd = open(g_logpath, O_WRONLY | O_CREAT, 0666);
     if (fd >= 0) {
         lseek(fd, 0, SEEK_END);
@@ -107,7 +107,7 @@ static void emit(const char *line)
     g_ring_head = (g_ring_head + 1) % RING_LINES;
     /* On slow hardware, post-boot output must not compete with audio for the IOP. */
     if (!defer_io) {
-        int w = kh_io_begin();
+        int w = kh_io_begin_tag("debug stdout");
         fputs(line, stdout);
         kh_io_end(w);
     }
@@ -115,7 +115,7 @@ static void emit(const char *line)
     sio_puts(line);
 #endif
     if (g_log_mutex >= 0 && g_in_log != GetThreadId()) {   /* (no recursion) */
-        int w = kh_io_begin();
+        int w = kh_io_begin_tag("log mutex");
         WaitSema(g_log_mutex);
         kh_io_end(w);
         g_in_log = GetThreadId();

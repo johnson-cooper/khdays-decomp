@@ -11,6 +11,7 @@
  * POWCNT bit 15 says which 2D engine drives the top screen, as on the DS.
  */
 #include "platform/kh_platform.h"
+#include "platform/kh_loadprof.h"
 #include "nitro_internal.h"
 
 extern void kh_ds2d_draw(int eng, int x, int y, int w, int h);
@@ -41,9 +42,15 @@ void kh_nitro_render_frame(void)
     int W = kh_video_width(), H = kh_video_height();
 
 #if KH_PS2_DEBUG
-    if (pad->pressed & KH_BTN_R3) {           /* bring-up: dump the game's object/task list */
-        extern void kh_debug_dump_objects(void);
-        kh_debug_dump_objects();
+    if (pad->pressed & KH_BTN_R3) {
+        if (pad->held & KH_BTN_SELECT) {
+            /* Deliberately user-triggered so slow-device log I/O is outside timed loads. */
+            KH_INFO("loadprof", "manual diagnostic log flush");
+            kh_log_flush();
+        } else {                              /* bring-up: dump the game's object/task list */
+            extern void kh_debug_dump_objects(void);
+            kh_debug_dump_objects();
+        }
     }
 #endif
     if (pad->pressed & KH_BTN_L3) {
@@ -61,17 +68,20 @@ void kh_nitro_render_frame(void)
     switch (g_layout) {
     case 0:
         draw_screen(top_eng, W / 4, 0, W / 2, H / 2);
-        draw_screen(bot_eng, W / 4, H / 2, W / 2, H / 2);
+        if (!kh_newgame_loading())
+            draw_screen(bot_eng, W / 4, H / 2, W / 2, H / 2);
         break;
     case 1:
         draw_screen(top_eng, 0, H / 4, W / 2, H / 2);
-        draw_screen(bot_eng, W / 2, H / 4, W / 2, H / 2);
+        if (!kh_newgame_loading())
+            draw_screen(bot_eng, W / 2, H / 4, W / 2, H / 2);
         break;
     case 2:
         draw_screen(top_eng, 0, 0, W, H);
         break;
     default:
-        draw_screen(bot_eng, 0, 0, W, H);
+        if (!kh_newgame_loading())
+            draw_screen(bot_eng, 0, 0, W, H);
         break;
     }
 #if KH_PS2_DEBUG

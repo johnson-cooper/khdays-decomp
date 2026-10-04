@@ -90,6 +90,12 @@ def main(argv):
         for s, e in fat:
             f.write(struct.pack("<II", s, e))
     os.replace(tmp, path)
+    with open(os.path.join(out_dir, "files.tsv"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("file_id\tpack_start\tpack_end\tbytes\tpath\n")
+        for fid in range(nfat):
+            start, end = fat[fid]
+            name = rom.files.get(fid, "<overlay in ELF>")
+            f.write(f"{fid}\t0x{start:08x}\t0x{end:08x}\t{end - start}\t{name}\n")
     with open(os.path.join(out_dir, "info.txt"), "w") as f:
         f.write(f"source: {KNOWN[code]} [{code}]\nfiles: {len(rom.files)}\npack bytes: {total}\n"
                 f"content sha1: {sha.hexdigest()}\nformat: khdays.pak version 1\n")
