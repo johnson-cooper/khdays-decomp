@@ -294,14 +294,44 @@ int FS_LoadOverlay(int target, u32 id)
         KH_ERR("fs", "FS_LoadOverlay(%u): no such overlay", (unsigned)id);
         return 0;
     }
+#if KH_PS2_DEBUG
+    if (id == 12) {
+        extern void kh_debug_stage(const char *stage, int a, int b);
+        kh_debug_stage("FS ov012: begin load", (int)id, 0);
+    }
+#endif
     o = &kh_overlay_info[id];
+#if KH_PS2_DEBUG
+    if (id == 12) {
+        extern void kh_debug_stage(const char *stage, int a, int b);
+        kh_debug_stage("FS ov012: restore .data", (int)(o->data_end - o->data_start), 0);
+    }
+#endif
     if (g_overlay_data_image[id])
         memcpy(o->data_start, g_overlay_data_image[id], (size_t)(o->data_end - o->data_start));
+#if KH_PS2_DEBUG
+    if (id == 12) {
+        extern void kh_debug_stage(const char *stage, int a, int b);
+        kh_debug_stage("FS ov012: clear .bss", (int)(o->bss_end - o->bss_start), 0);
+    }
+#endif
     if (o->bss_start)
         memset(o->bss_start, 0, (size_t)(o->bss_end - o->bss_start));
+#if KH_PS2_DEBUG
+    if (id == 12) {
+        extern void kh_debug_stage(const char *stage, int a, int b);
+        kh_debug_stage("FS ov012: clear .cbss", (int)(o->cbss_end - o->cbss_start), 0);
+    }
+#endif
     if (o->cbss_start && o->cbss_end > o->cbss_start)
         memset(o->cbss_start, 0, (size_t)(o->cbss_end - o->cbss_start));
     g_overlay_loaded[id] = 1;
+#if KH_PS2_DEBUG
+    if (id == 12) {
+        extern void kh_debug_stage(const char *stage, int a, int b);
+        kh_debug_stage("FS ov012: load complete", (int)id, 0);
+    }
+#endif
     KH_INFO("fs", "overlay %u loaded", (unsigned)id);
     return 1;
 }
