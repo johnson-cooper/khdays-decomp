@@ -35,6 +35,7 @@ extern void Ov000_ReleaseLogoResources(void);
 extern void kh_ps2_snd_stop_slot_nonblocking(int slot, int frames);
 extern void Ov000_ReentryState(void);
 extern void Ov000_TickBootFadeTransition(void);
+extern volatile const char *kh_watchdog_mark;
 
 OverlayCallback Ov000_WaitSubMenuResult(void)
 {
@@ -43,9 +44,11 @@ OverlayCallback Ov000_WaitSubMenuResult(void)
 
     /* Once Yes has published result 5, do not run one more menu update/draw before leaving. */
     if (result == 5) {
+        kh_watchdog_mark = "newgame: result 5";
         context->state_0 = 0;
         context->transition_flag = 1;
         kh_ps2_snd_stop_slot_nonblocking(0, 30);
+        kh_watchdog_mark = "newgame: fade transition";
         return Ov000_TickBootFadeTransition;
     }
 
