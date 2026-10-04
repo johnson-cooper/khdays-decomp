@@ -134,6 +134,11 @@ static void watchdog_thread(void *arg)
     for (;;) {
         uint32_t now;
         WaitSema(g_sema);
+        {
+            extern volatile int kh_crash_active;
+            if (kh_crash_active)
+                continue;   /* preserve the primary EE exception screen/evidence */
+        }
         now = kh_watchdog_progress;
         if (now != last) {
             last = now;
