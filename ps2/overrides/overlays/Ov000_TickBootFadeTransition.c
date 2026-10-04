@@ -29,6 +29,7 @@ extern void G2x_SetBlendBrightness_(u32 registerAddress, int planeMask, int brig
 extern void kh_ps2_snd_stop_slot_nonblocking(int slot, int frames);
 extern void func_02023ad0(void *handle);
 extern void Ov000_BootDispatch(void);
+extern volatile const char *kh_watchdog_mark;
 
 Ov000StateFn Ov000_TickBootFadeTransition(void)
 {
@@ -54,10 +55,13 @@ Ov000StateFn Ov000_TickBootFadeTransition(void)
         SetMasterBrightnessMain(-0x10);
         SetMasterBrightnessSub(-0x10);
 
-        if (context->frame == 0x30)
+        if (context->frame == 0x30) {
+            kh_watchdog_mark = "newgame: fade slot1";
             kh_ps2_snd_stop_slot_nonblocking(1, 0x10);
-        else if (context->frame == 0x40 && SoundStrm_HasPlaybackPos(1) != 0)
+        } else if (context->frame == 0x40 && SoundStrm_HasPlaybackPos(1) != 0) {
+            kh_watchdog_mark = "newgame: slot1 fallback";
             kh_ps2_snd_stop_slot_nonblocking(1, 0);
+        }
 
         if (SoundStrm_HasPlaybackPos(1) == 0) {
             context->frame = 0;
@@ -80,6 +84,7 @@ Ov000StateFn Ov000_TickBootFadeTransition(void)
                 }
                 break;
             }
+            kh_watchdog_mark = "newgame: boot dispatch";
             return Ov000_BootDispatch;
         }
     }
