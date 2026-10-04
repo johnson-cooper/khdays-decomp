@@ -13,6 +13,34 @@
 
 extern int gObjSystem[];
 
+/* Class-instantiation boundary probes. These use kh_debug_mark(), which records the latest stage
+ * without touching GS/VIF. That matters during the opening-movie -> field handoff, where drawing
+ * a full diagnostic frame can itself block behind in-flight movie/GS work. */
+extern void kh_debug_mark(const char *stage, int a, int b);
+
+extern void *__real_InstantiateClass(void *classDesc, int ctorArg);
+void *__wrap_InstantiateClass(void *classDesc, int ctorArg)
+{
+    void *r;
+    kh_debug_mark("wrap InstantiateClass: enter", (int)classDesc, ctorArg);
+    r = __real_InstantiateClass(classDesc, ctorArg);
+    kh_debug_mark("wrap InstantiateClass: returned", (int)r, (int)classDesc);
+    return r;
+}
+
+extern int *__real_RunClassConstructor(int *obj, unsigned short *desc, int ctorArg);
+int *__wrap_RunClassConstructor(int *obj, unsigned short *desc, int ctorArg)
+{
+    int *r;
+    int cls = desc ? (int)desc[0] : -1;
+    int grp = desc ? (int)desc[1] : -1;
+    kh_debug_mark("wrap RunClassConstructor: enter", cls, grp);
+    r = __real_RunClassConstructor(obj, desc, ctorArg);
+    kh_debug_mark("wrap RunClassConstructor: returned", cls, grp);
+    return r;
+}
+
+
 void kh_debug_dump_objects(void)
 {
     const u8 *node = (const u8 *)(uintptr_t)gObjSystem[3];
@@ -75,6 +103,7 @@ void kh_trace_script_cmd(void *st, const char *cmd)
         return;
     last_st = st;
     last_cmd = cmd;
+    kh_debug_mark("script command", (int)(u8)cmd[0], (int)(u8)cmd[1]);
     KH_INFO("script", "%p %u.%u at %p", st, (unsigned)(u8)cmd[0], (unsigned)(u8)cmd[1], (const void *)cmd);
 }
 
