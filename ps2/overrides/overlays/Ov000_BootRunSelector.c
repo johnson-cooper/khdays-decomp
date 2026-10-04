@@ -1,15 +1,12 @@
-/* PS2 override: finish New Game without running Nintendo DS cartridge protection.
- *
- * The original selector loads ov028 and only requests the opening scene when three DS Protect
- * cartridge predicates succeed.  That overlay probes DS ROM mirroring and the DS wireless MAC;
- * it has no meaningful implementation on a PS2.  Its failure path deliberately requests no
- * scene at all, leaving the title task alive on its final loading frame forever.  Preserve the
- * game/session setup and selector semantics, but treat the PS2 build as the supported platform
- * and enter the opening movie directly.
- */
+/* PS2 debug override: trace the selector that requests the opening scene. */
 #include "nitro/types.h"
 #include "game/engine.h"
 #include "game/scene.h"
+#include "platform/kh_platform.h"
+
+typedef u32 FSOverlayID;
+extern u32 OVERLAY_28_ID[1];
+#define FS_OVERLAY_ID_ov028 ((FSOverlayID)(u32)&OVERLAY_28_ID)
 
 typedef struct Ov000DisplayConfig {
     int enabled;
@@ -35,8 +32,12 @@ typedef struct Ov000BootContext {
     int bootRequestPending;
 } Ov000BootContext;
 
+extern void kh_debug_stage(const char *stage, int a, int b);
 extern Ov000BootContext *NNSi_FndGetCurrentRootHeap(void);
 extern void Ov000_ResetPartyMemberAndLayout(int a, int b);
+extern int func_ov028_0208b490(int a);
+extern int func_ov028_0208b120(int a);
+extern int func_ov028_0208b2e0(int a);
 extern void Ov000_RequestScene11(void);
 extern BootModeState data_0204c240;
 
@@ -46,6 +47,9 @@ int Ov000_BootRunSelector(void)
     Ov000ModeConfig mode;
     Ov000DisplayConfig display;
     int selector = 0;
+    int p0, p1, p2;
+
+    kh_debug_stage("boot selector: entered", ctx->bootRequestPending, 0);
 
     display.enabled = 1;
     display.visible = 1;
@@ -54,18 +58,47 @@ int Ov000_BootRunSelector(void)
     mode.reserved = 0;
     CopyToSlotTable8(&mode, 0);
     EnsureServiceInstance();
+
+    kh_debug_stage("boot selector: reset party/layout", 0, 0);
     Ov000_ResetPartyMemberAndLayout(0, 0);
+    kh_debug_stage("boot selector: reset returned", 0, 0);
 
     if (ctx->bootRequestPending != 0)
         selector = GameState_GetField(0, 9);
 
+    kh_debug_stage("boot selector: selector value", selector, ctx->bootRequestPending);
+
     if (selector == 0x191) {
         data_0204c240.resetWord = 0;
         data_0204c240.state = 0;
-        data_0204c240.elapsed = 0x2710;
-        Ov000_RequestScene11();
+
+        kh_debug_stage("boot selector: load ov028", 28, 0);
+        LoadOverlaySync(0, FS_OVERLAY_ID_ov028);
+        kh_debug_stage("boot selector: ov028 loaded", 28, 0);
+
+        p0 = func_ov028_0208b490(0);
+        kh_debug_stage("boot selector: protect check 1", p0, 0);
+        p1 = func_ov028_0208b120(0);
+        kh_debug_stage("boot selector: protect check 2", p1, 0);
+        p2 = func_ov028_0208b2e0(0);
+        kh_debug_stage("boot selector: protect check 3", p2, 0);
+
+        if (p0 != 0 && p1 != 0 && p2 != 0) {
+            data_0204c240.elapsed = 0x2710;
+            kh_debug_stage("boot selector: request opening", SCENE_OPENING, 0);
+            Ov000_RequestScene11();
+            kh_debug_stage("boot selector: opening requested", SCENE_OPENING, 0);
+        }
+
+        kh_debug_stage("boot selector: unload ov028", 28, 0);
+        UnloadOverlaySync(0, FS_OVERLAY_ID_ov028);
+        kh_debug_stage("boot selector: ov028 unloaded", 28, 0);
     } else {
+        kh_debug_stage("boot selector: request calendar", SCENE_CALENDAR, selector);
         Scene_RequestPending(SCENE_CALENDAR, selector);
+        kh_debug_stage("boot selector: calendar requested", SCENE_CALENDAR, selector);
     }
+
+    kh_debug_stage("boot selector: complete", selector, 0);
     return -2;
 }
