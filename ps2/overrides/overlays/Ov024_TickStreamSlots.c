@@ -54,11 +54,18 @@ unsigned int Ov024_TickStreamSlots(void)
     }
     if (can_decode((const struct MobiClipFrameTimer *)data_ov024_02093a2c[2]) ||
         can_decode((const struct MobiClipFrameTimer *)data_ov024_02093a2c[3])) {
-        if (kh_nitro_poll_vblank())
-            KhNitro_PresentFrame();
+        /*
+         * Keep decoding between VBlanks.  If one elapsed, the PS2 poll helper now performs the
+         * complete VBlank/alarm service and submits the updated DS compositor to the GS.
+         */
+        kh_nitro_poll_vblank();
     } else {
-        KhNitro_PresentFrame();
+        /*
+         * The decode queue is full (or draining): sleep until the next VBlank so the frame alarm
+         * can consume a buffer, then submit the newly selected movie frame.
+         */
         OS_WaitVBlankIntr();
+        KhNitro_PresentFrame();
     }
     return lo;
 }
