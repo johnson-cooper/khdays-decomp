@@ -74,8 +74,24 @@ int Scene_AdvanceToPending(void)
     if (s->obj == 0) {
         int id = s->pendId;
         if (id != 0) {
+            /*
+             * Consume this request as one transaction.  A scene constructor is allowed to issue
+             * another Scene_RequestPending() while it initializes.  The old code left pendId live
+             * through InstantiateClass() and then used the possibly changed pendId as curId before
+             * clearing it.  On PS2 the field constructor does exactly that during the day-255
+             * handoff: we load scene 2, but a nested request changes pendId and the dispatcher ends
+             * up reporting the new object as scene 5 while also erasing the nested request.
+             *
+             * Snapshot both fields and clear the consumed request before calling into the new
+             * scene.  Any request made by its constructor is then a genuinely new pending request
+             * and remains intact for the next handoff.
+             */
+            int arg = s->pendArg;
             SceneEntry *ent = &gSceneTable[id];
             int ov = ent->overlayId;
+
+            s->pendId = 0;
+            s->pendArg = 0;
 
             kh_debug_stage("scene advance: begin pending", id, ov);
             if (ov != -1) {
@@ -87,9 +103,9 @@ int Scene_AdvanceToPending(void)
             /* Do not draw a full probe frame here: the opening-movie path may still own VIF/GIF.
              * A synchronous probe draw can itself become the apparent hang.  Record the boundary
              * only; the exception/watchdog screen will report it if the following call stalls. */
-            kh_debug_mark("scene advance: InstantiateClass", id, s->pendArg);
+            kh_debug_mark("scene advance: InstantiateClass", id, arg);
             {
-                void *obj = InstantiateClass(ent->classDesc, s->pendArg);
+                void *obj = InstantiateClass(ent->classDesc, arg);
                 kh_debug_stage("scene advance: class instantiated", id, (int)obj);
                 s->obj = obj;
                 s->entry = ent;
@@ -98,10 +114,8 @@ int Scene_AdvanceToPending(void)
                 kh_debug_stage("scene advance: Word_Set returned", id, 1);
             }
 
-            s->curId = s->pendId;
-            s->pendId = 0;
-            s->pendArg = 0;
-            kh_debug_stage("scene advance: complete", s->curId, 0);
+            s->curId = id;
+            kh_debug_stage("scene advance: complete", s->curId, s->pendId);
         }
     }
     return 1;
