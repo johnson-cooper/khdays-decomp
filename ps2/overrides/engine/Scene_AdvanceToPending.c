@@ -15,6 +15,7 @@ typedef struct SceneCtl {
 } SceneCtl;
 
 extern void kh_debug_stage(const char *stage, int a, int b);
+extern void kh_debug_mark(const char *stage, int a, int b);
 extern int data_0204bda4;
 extern char gSceneCtl[];
 extern SceneEntry gSceneTable[];
@@ -73,7 +74,10 @@ int Scene_AdvanceToPending(void)
                 kh_debug_stage("scene advance: overlay loaded", id, ov);
             }
 
-            kh_debug_stage("scene advance: InstantiateClass", id, s->pendArg);
+            /* Do not draw a full probe frame here: the opening-movie path may still own VIF/GIF.
+             * A synchronous probe draw can itself become the apparent hang.  Record the boundary
+             * only; the exception/watchdog screen will report it if the following call stalls. */
+            kh_debug_mark("scene advance: InstantiateClass", id, s->pendArg);
             {
                 void *obj = InstantiateClass(ent->classDesc, s->pendArg);
                 kh_debug_stage("scene advance: class instantiated", id, (int)obj);
