@@ -33,7 +33,8 @@ void *Ov012_RunOpeningScene(void) {
     char *context;
     int exitSceneId;
 
-    context = (char *)NNSi_FndGetCurrentRootHeap();\n    kh_debug_stage("ov012 run: entered", *(int *)(context + 0x8bd8), *(int *)(context + 0x8bdc));
+    context = (char *)NNSi_FndGetCurrentRootHeap();
+    kh_debug_stage("ov012 run: entered", *(int *)(context + 0x8bd8), *(int *)(context + 0x8bdc));
     if ((*(u16 *)(context + 2) & 2) == 0) {
         if (*(int *)(context + 0x8bd8) == 2 ||
             *(int *)(context + 0x8bdc) == 2) {
@@ -72,7 +73,11 @@ void *Ov012_RunOpeningScene(void) {
                         *(u32 *)(context + 0x8bec) = pressedKeys;
                     }
 
-                    if ((*(u16 *)(context + 2) & 1) != 0) {\n                        kh_debug_stage("ov012 run: Game_RunActionScript movie loop", *(int *)(context + 0x124 + 4), *(int *)(context + 0x8dec));\n                    }\n                    if ((*(u16 *)(context + 2) & 1) != 0 &&\n                        Game_RunActionScript(context + 4) == 0) {
+                    if ((*(u16 *)(context + 2) & 1) != 0) {
+                        kh_debug_stage("ov012 run: Game_RunActionScript movie loop", *(int *)(context + 0x124 + 4), *(int *)(context + 0x8dec));
+                    }
+                    if ((*(u16 *)(context + 2) & 1) != 0 &&
+                        Game_RunActionScript(context + 4) == 0) {
                         *(u16 *)(context + 2) &= ~1;
                     }
 
@@ -116,7 +121,8 @@ void *Ov012_RunOpeningScene(void) {
         }
     }
 
-    kh_debug_stage("ov012 run: Game_RunActionScript pre-movie", *(int *)(context + 0x128), *(int *)(context + 0x8dec));\n    if (Game_RunActionScript(context + 4) == 0) {
+    kh_debug_stage("ov012 run: Game_RunActionScript pre-movie", *(int *)(context + 0x128), *(int *)(context + 0x8dec));
+    if (Game_RunActionScript(context + 4) == 0) {
         goto cleanup;
     }
 
