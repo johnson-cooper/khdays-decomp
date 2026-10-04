@@ -74,8 +74,60 @@ extern unsigned char gObjSystem;      /* frame-rate/skip mode byte */
 extern char          gSceneCtl[];     /* obj, entry, curId, pendId, pendArg */
 extern void         *gBootTaskClass;
 
+/* ov004 calendar state is only dereferenced while scene 5 is current. */
+extern void         *data_ov004_02051384;
+extern int           Ov004_StepMissionSelectScene(void);
+
 struct SceneState { unsigned char phase; unsigned char _p[3]; int handle; };
 extern struct SceneState data_020442a0;
+
+
+/*
+ * Hardware fallback for the DAY card.
+ *
+ * On PS2 the child ov004 animation has repeatedly reached its terminal visual state while the
+ * protected scene object remains live and no pending field request is produced.  Run the parent
+ * completion callback explicitly once the calendar is visibly ready.  This preserves the
+ * original scene-completion logic instead of duplicating it in the frame loop.
+ */
+static void ps2_finish_ready_calendar(void)
+{
+    int *scene = (int *)gSceneCtl;
+    int *obj = (int *)scene[0];
+    unsigned char *ctx;
+    int phase;
+    int complete;
+    int transitionState;
+    int cb;
+
+    if (scene[2] != SCENE_CALENDAR || scene[3] != 0 || obj == 0 || obj[5] == -2)
+        return;
+
+    ctx = (unsigned char *)data_ov004_02051384;
+    if (ctx == 0)
+        return;
+
+    phase = *(int *)(ctx + 0xaf8);
+    complete = *(int *)(ctx + 0x5550);
+    transitionState = *(int *)(ctx + 0x5584);
+
+    /*
+     * phase >= 4 is the normal terminal phase.  transitionState == 2 means the logo/label
+     * transition has finished; on PS2 that is also sufficient because the only remaining DS
+     * work is the cartridge anti-piracy/fade tail.
+     */
+    if (complete == 0 && phase < 4 && transitionState != 2)
+        return;
+
+    kh_debug_mark("main: calendar fallback", phase,
+                  (complete ? 0x100 : 0) | (transitionState & 0xff));
+
+    cb = Ov004_StepMissionSelectScene();
+    if (cb != 0) {
+        obj[5] = cb;
+        kh_debug_mark("main: calendar callback", cb, scene[3]);
+    }
+}
 
 /*
  * A scene object with flag 1 is intentionally not destroyed by Obj_UpdateAll when its state
@@ -180,6 +232,13 @@ void kh_game_main(void) {
 
         /* scene poll: on the DS the rest of this block is lid-close / sleep handling */
         (void)Game_PollSceneAlive();
+
+        /*
+         * The calendar child can finish without the protected parent callback running again on
+         * PS2 hardware.  Complete that parent state explicitly before checking the generic dead
+         * scene handoff.
+         */
+        ps2_finish_ready_calendar();
 
         /*
          * The frame is already on the GS, so it is safe to tear down the finished scene here.
