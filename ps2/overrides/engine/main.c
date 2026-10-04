@@ -60,6 +60,8 @@ extern void  Obj_UpdateAll(int a);
 extern void  Callbacks_Run(int a);
 extern void  SoundMgr_Update(void);
 extern int   Game_PollSceneAlive(void);
+extern int   Scene_AdvanceToPending(void);
+extern void  kh_debug_mark(const char *stage, int a, int b);
 extern void  KhNitro_PresentFrame(void);   /* ps2/src/nitro: GX flush + swap */
 
 /* ---- globals ---- */
@@ -69,10 +71,34 @@ extern int           data_0204c024;   /* default arena ref */
 extern unsigned char data_0204c215;   /* "present pending" flag */
 extern unsigned char gPauseMode;      /* display mode byte (0/1/2) */
 extern unsigned char gObjSystem;      /* frame-rate/skip mode byte */
+extern char          gSceneCtl[];     /* obj, entry, curId, pendId, pendArg */
 extern void         *gBootTaskClass;
 
 struct SceneState { unsigned char phase; unsigned char _p[3]; int handle; };
 extern struct SceneState data_020442a0;
+
+/*
+ * A scene object with flag 1 is intentionally not destroyed by Obj_UpdateAll when its state
+ * becomes -2; the root BootTask notices it on its next update and Scene_AdvanceToPending performs
+ * the protected teardown/overlay switch.  On the PS2 path we have observed the calendar reach
+ * exactly that state (cur=5, pend=2, state=-2, flags=1) and then remain there indefinitely: the
+ * following BootTask update is not guaranteed to run.
+ *
+ * Run the same dispatcher explicitly after the completed/presented frame whenever that invariant
+ * is visible.  This is deliberately narrow: a live scene, an unprotected ordinary object, or a
+ * scene with no pending replacement is untouched.  Calling the dispatcher again is harmless when
+ * BootTask already advanced normally because pendId is cleared by a successful handoff.
+ */
+static void ps2_finish_pending_dead_scene(void)
+{
+    int *scene = (int *)gSceneCtl;
+    int *obj = (int *)scene[0];
+
+    if (obj != 0 && scene[3] != 0 && obj[5] == -2 && (obj[0] & 1) != 0) {
+        kh_debug_mark("main: advance dead scene", scene[2], scene[3]);
+        Scene_AdvanceToPending();
+    }
+}
 
 void kh_game_main(void) {
     struct BootSettings boot;
@@ -154,5 +180,12 @@ void kh_game_main(void) {
 
         /* scene poll: on the DS the rest of this block is lid-close / sleep handling */
         (void)Game_PollSceneAlive();
+
+        /*
+         * The frame is already on the GS, so it is safe to tear down the finished scene here.
+         * Normally BootTask performs this at the start of the next object update.  The explicit
+         * guard prevents a PS2-only pause/scheduling edge from stranding a protected dead scene.
+         */
+        ps2_finish_pending_dead_scene();
     }
 }
