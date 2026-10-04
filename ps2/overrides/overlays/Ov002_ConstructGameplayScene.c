@@ -3,7 +3,7 @@
 #include "nitro/types.h"
 #include "platform/kh_platform.h"
 
-extern void kh_debug_stage(const char *stage, int a, int b);
+extern void kh_debug_mark(const char *stage, int a, int b);
 
 extern int   data_ov002_0207fa00;
 extern short data_0204c23c;
@@ -74,12 +74,12 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     char buf[0x14];
     int i;
 
-    kh_debug_stage("field ctor: entered", (int)param_1, 0);
+    kh_debug_mark("field ctor: entered", (int)param_1, 0);
 
     heap = (char *)NNSi_FndGetCurrentRootHeap();
     rec = heap + 0x8ba8;
     data_ov002_0207fa00 = (int)heap;
-    kh_debug_stage("field ctor: root work", (int)heap, 0x8dc4);
+    kh_debug_mark("field ctor: root work", (int)heap, 0x8dc4);
 
     if (GameState_IsFlagSet(0x18bd) == 0 && GameState_IsFlagSet(0x18c9) == 0)
         Ov002_SetLazyClassEnabled(1);
@@ -103,7 +103,7 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     *(u16 *)(heap + 0x8dc0) = 0xffff;
     *(u8 *)(heap + 0x8d9c) = 0;
     *(u8 *)(heap + 0x8da4) = 0;
-    kh_debug_stage("field ctor: header initialized", i, Session_GetLocalPlayerIndex());
+    kh_debug_mark("field ctor: header initialized", i, Session_GetLocalPlayerIndex());
 
     Ov002_InitPlayRecord();
     MI_CpuFill8(heap + 0x859c, 0, 0x5a4);
@@ -114,7 +114,7 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     Game_ApplyModeFlags();
     GameState_SetField(0x82 << 6, 5, 0);
     *(int *)(rec + 0x14) = *(u8 *)(src + 1);
-    kh_debug_stage("field ctor: mission params", *(u16 *)rec, *(int *)(rec + 0x14));
+    kh_debug_mark("field ctor: mission params", *(u16 *)rec, *(int *)(rec + 0x14));
 
     if ((data_0204c240 & 2) != 0 && (data_0204c240 & 4) == 0) {
         int k;
@@ -128,16 +128,16 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     }
 
     OS_SPrintf(buf, &gOv002MiMiPathFmt, *(short *)rec);
-    kh_debug_stage("field ctor: open mission archive", *(u16 *)rec, 2);
+    kh_debug_mark("field ctor: open mission archive", *(u16 *)rec, 2);
     *(int *)(heap + 4) = Msg_OpenContainerAndReadHeader(buf, 2);
-    kh_debug_stage("field ctor: archive opened", *(int *)(heap + 4), *(u16 *)rec);
+    kh_debug_mark("field ctor: archive opened", *(int *)(heap + 4), *(u16 *)rec);
 
     Ov002_ResetGlobalTracks(*(int *)(rec + 0x14));
     Ov002_ClearRosterRow();
     Ov002_InitHandleRecord();
     Ov002_InitContextRecord();
     Ov002_InitStateRecord();
-    kh_debug_stage("field ctor: records initialized", 0, 0);
+    kh_debug_mark("field ctor: records initialized", 0, 0);
 
     Ov002_World_ClearByte8C98();
     Ov002_World_ClearPair8D7C();
@@ -146,44 +146,44 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     Ov002_World_ClearTarget();
     Ov002_World_ResetMarker();
     Ov002_ForceMasterBrightnessToLimit();
-    kh_debug_stage("field ctor: world reset", 0, 0);
+    kh_debug_mark("field ctor: world reset", 0, 0);
 
-    kh_debug_stage("field ctor: AllocSceneState", 0, 0);
+    kh_debug_mark("field ctor: AllocSceneState", 0, 0);
     Ov002_AllocSceneState();
-    kh_debug_stage("field ctor: scene state allocated", 0, 0);
+    kh_debug_mark("field ctor: scene state allocated", 0, 0);
 
-    kh_debug_stage("field ctor: CreateSlotContext", *(short *)rec, 0);
+    kh_debug_mark("field ctor: CreateSlotContext", *(short *)rec, 0);
     Ov002_CreateSlotContext(*(short *)rec);
-    kh_debug_stage("field ctor: slot context ready", *(short *)rec, 0);
+    kh_debug_mark("field ctor: slot context ready", *(short *)rec, 0);
 
     EntityManager_ResetSingleton();
     Ov002_ResetNineSlots();
     Ov002_Roster_Create();
-    kh_debug_stage("field ctor: entity roster ready", 0, 0);
+    kh_debug_mark("field ctor: entity roster ready", 0, 0);
 
-    kh_debug_stage("field ctor: CreateRootObject", *(int *)((char *)&data_0204c4d8 + 0x14), 0);
+    kh_debug_mark("field ctor: CreateRootObject", *(int *)((char *)&data_0204c4d8 + 0x14), 0);
     Ov002_CreateRootObject(*(int *)((char *)&data_0204c4d8 + 0x14));
-    kh_debug_stage("field ctor: root object ready", 0, 0);
+    kh_debug_mark("field ctor: root object ready", 0, 0);
 
     Ov002_Link_InstallPacketHandler();
     Ov002_ScheduleRetry();
     Ov002_CreateSeededObjectOnce();
     Ov002_RefreshSlotOccupancy();
-    kh_debug_stage("field ctor: link/seed ready", 0, 0);
+    kh_debug_mark("field ctor: link/seed ready", 0, 0);
 
-    kh_debug_stage("field ctor: CreateSceneRegistry", 0, 0);
+    kh_debug_mark("field ctor: CreateSceneRegistry", 0, 0);
     Ov002_CreateSceneRegistry();
     Ov002_SetSceneObjectsActive(1);
-    kh_debug_stage("field ctor: registry active", 0, 0);
+    kh_debug_mark("field ctor: registry active", 0, 0);
 
-    kh_debug_stage("field ctor: EnsureSceneManager", 0x792b, 0);
+    kh_debug_mark("field ctor: EnsureSceneManager", 0x792b, 0);
     Ov002_EnsureSceneManager(0x792b);
-    kh_debug_stage("field ctor: scene manager ready", 0x792b, 0);
+    kh_debug_mark("field ctor: scene manager ready", 0x792b, 0);
 
     Ov002_StreamFormattedLine(&gOv002SName, &gOv002IName);
     Ov002_SetRootWord8a28(0, *(int *)(heap + 4));
     MI_CpuFill8(heap + 0x8d84, 0, 0x18);
-    kh_debug_stage("field ctor: stream/root configured", *(int *)(heap + 4), 0);
+    kh_debug_mark("field ctor: stream/root configured", *(int *)(heap + 4), 0);
 
     if ((data_0204c240 & 0xc) == 4 && *(u8 *)((char *)&data_0204c248 + 2) != 0) {
         int v = (GetFrameRateMode() == 1) ? 0x14 : 0x1e;
@@ -211,18 +211,18 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     *(u8 *)(heap + 0x8d9e) = 0;
 
     Ov002_SetStateRecordStage();
-    kh_debug_stage("field ctor: state record ready", 0, 0);
+    kh_debug_mark("field ctor: state record ready", 0, 0);
 
     if ((data_0204c240 & 4) == 0) {
-        kh_debug_stage("field ctor: PartyState alloc", 0, 0);
+        kh_debug_mark("field ctor: PartyState alloc", 0, 0);
         PartyState_AllocRecord();
-        kh_debug_stage("field ctor: PartyState ready", 0, 0);
+        kh_debug_mark("field ctor: PartyState ready", 0, 0);
     }
 
     if ((data_0204c240 & 4) == 0) {
-        kh_debug_stage("field ctor: allocate table", 0x80, 0);
+        kh_debug_mark("field ctor: allocate table", 0x80, 0);
         *(int *)(heap + 0x8dac) = NNSi_FndAllocFromDefaultExpHeap(0x80);
-        kh_debug_stage("field ctor: table allocated", *(int *)(heap + 0x8dac), 0x80);
+        kh_debug_mark("field ctor: table allocated", *(int *)(heap + 0x8dac), 0x80);
         for (i = 0; i < 0x40; i++)
             *(short *)(*(int *)(heap + 0x8dac) + i * 2) =
                 GameState_GetField(0x1400 + i * 0x10, 0x10);
@@ -230,7 +230,7 @@ void *Ov002_ConstructGameplayScene(void *param_1)
         *(int *)(heap + 0x8dac) = 0;
     }
 
-    kh_debug_stage("field ctor: SelectTableEntry", 0, 0);
+    kh_debug_mark("field ctor: SelectTableEntry", 0, 0);
     Ov002_SelectTableEntry();
     GameState_SetField(0x20dd, 3, 0xffff);
 
@@ -252,7 +252,7 @@ void *Ov002_ConstructGameplayScene(void *param_1)
         }
     }
 
-    kh_debug_stage("field ctor: complete", Session_IsActive(), data_0204c23c);
+    kh_debug_mark("field ctor: complete", Session_IsActive(), data_0204c23c);
     if (Session_IsActive() != 0)
         return (void *)Ov002_UpdatePendingRequest;
     return (void *)Ov002_TickGameplayState;
