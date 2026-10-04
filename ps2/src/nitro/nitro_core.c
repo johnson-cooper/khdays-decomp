@@ -91,7 +91,8 @@ static void run_vblank(void)
  * waits for a VBlank and when it reads the counter.  Without this every frame that crossed a
  * VBlank paid one extra whole VBlank (31 ms of work -> 50 ms frames instead of 33). */
 #define MAX_CATCHUP 8
-static uint32_t g_delivered;          /* kh_vblank_count() up to which VBlanks were delivered */
+static uint32_t g_delivered;          /* kh_vblank_count() up to which DS VBlank IRQs were delivered */
+static uint32_t g_serviced;           /* kh_vblank_count() up to which full PS2 VBlank service ran */
 static int g_delivering;
 
 static void deliver_pending_vblanks(int at_least_one)
@@ -111,8 +112,9 @@ static void deliver_pending_vblanks(int at_least_one)
 }
 
 /* Everything a VBlank brings: the flip, input, the game's VBlank handler, alarms. */
-static void vblank_service(void)
+static void vblank_service(int force_irq)
 {
+    uint32_t serviced_to = kh_vblank_count();
     kh_prof_begin(KH_PROF_VBTASK);
     kh_video_flip();          /* show the frame submitted last iteration, now that we are in VBlank */
     kh_input_poll();
@@ -120,13 +122,14 @@ static void vblank_service(void)
         extern void kh_ds_key_registers_update(void);   /* ps2/overrides/engine/Pad_Sample.c */
         kh_ds_key_registers_update();
     }
-    deliver_pending_vblanks(1);
+    deliver_pending_vblanks(force_irq);
     kh_nitro_run_alarms();
     {
         extern void kh_snd_run_alarms(void);
         kh_snd_run_alarms();      /* the ARM7 sound alarms (stream players) */
     }
     kh_prof_end(KH_PROF_VBTASK);
+    g_serviced = serviced_to;
 #if KH_PS2_DEBUG
     kh_prof_begin(KH_PROF_DEBUG);
 #if defined(KH_PS2_HEAP_CHECK) && KH_PS2_HEAP_CHECK
@@ -175,7 +178,7 @@ void OS_WaitVBlankIntr(void)
     kh_prof_begin(KH_PROF_VBLANK);
     kh_vblank_wait();
     kh_prof_end(KH_PROF_VBLANK);
-    vblank_service();
+    vblank_service(1);
 #if KH_PS2_DEBUG
     {
         extern volatile const char *kh_watchdog_mark;
@@ -189,9 +192,27 @@ void OS_WaitVBlankIntr(void)
  * without waiting for the next.  1 if it did. */
 int kh_nitro_poll_vblank(void)
 {
-    if (kh_vblank_count() == g_delivered)
+    extern void KhNitro_PresentFrame(void);
+
+    /*
+     * Blocking MobiClip loops do not return to kh_game_main(), so they otherwise miss both
+     * Nitro alarms (which pace/consume decoded movie frames) and the normal GS submission at
+     * the bottom of the frame loop.  VBlank_GetCount() may already have delivered the DS IRQ,
+     * therefore track full service separately from g_delivered and do not force a duplicate IRQ.
+     */
+    if (kh_vblank_count() == g_serviced)
         return 0;
-    vblank_service();
+
+    vblank_service(0);
+#if KH_PS2_DEBUG
+    {
+        extern volatile uint32_t kh_watchdog_progress;
+        extern volatile const char *kh_watchdog_mark;
+        kh_watchdog_progress++;
+        kh_watchdog_mark = "movie: VBlank/alarm/GS pump";
+    }
+#endif
+    KhNitro_PresentFrame();
     return 1;
 }
 
