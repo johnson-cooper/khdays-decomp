@@ -47,6 +47,26 @@ void kh_debug_stage_overlay(void)
         int y = kh_video_height() - 20;
         kh_video_debug_text(8, y, 0xffffff, "DBG %s  a=%d b=%d",
                             g_stage, g_stage_a, g_stage_b);
+        {
+            /* Keep the scene handoff state visible even when the last breadcrumb came from an
+             * object callback.  gSceneCtl is five words: obj, entry, curId, pendId, pendArg. */
+            extern char gSceneCtl[];
+            int *scene = (int *)gSceneCtl;
+            int *obj = (int *)scene[0];
+            int state = 0x7fffffff;
+            int flags = 0;
+            unsigned int p = (unsigned int)obj;
+
+            /* Only dereference plausible EE RAM pointers; a stale scene pointer is itself useful
+             * evidence and must not make the diagnostic overlay crash. */
+            if (p >= 0x00010000u && p < 0x02000000u) {
+                flags = obj[0];
+                state = obj[5];
+            }
+            kh_video_debug_text(8, y - 14, 0xffffff,
+                                "SCN cur=%d pend=%d arg=%d state=%d flags=%x",
+                                scene[2], scene[3], scene[4], state, flags);
+        }
     }
 #endif
 }
