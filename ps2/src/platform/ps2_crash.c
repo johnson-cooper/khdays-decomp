@@ -5,6 +5,7 @@
 #include "ps2_internal.h"
 
 #include <stdio.h>
+#include <string.h>
 #include <kernel.h>
 #include <debug.h>
 #include <ee_debug.h>
