@@ -132,12 +132,25 @@ void *Ov002_ConstructGameplayScene(void *param_1)
     *(int *)(heap + 4) = Msg_OpenContainerAndReadHeader(buf, 2);
     kh_debug_mark("field ctor: archive opened", *(int *)(heap + 4), *(u16 *)rec);
 
+    kh_debug_mark("field ctor: ResetGlobalTracks", *(int *)(rec + 0x14), 0);
     Ov002_ResetGlobalTracks(*(int *)(rec + 0x14));
+    kh_debug_mark("field ctor: ResetGlobalTracks ok", 0, 0);
+
+    kh_debug_mark("field ctor: ClearRosterRow", 0, 0);
     Ov002_ClearRosterRow();
+    kh_debug_mark("field ctor: ClearRosterRow ok", 0, 0);
+
+    kh_debug_mark("field ctor: InitHandleRecord", 0, 0);
     Ov002_InitHandleRecord();
+    kh_debug_mark("field ctor: InitHandleRecord ok", 0, 0);
+
+    kh_debug_mark("field ctor: InitContextRecord", 0, 0);
     Ov002_InitContextRecord();
+    kh_debug_mark("field ctor: InitContextRecord ok", 0, 0);
+
+    kh_debug_mark("field ctor: InitStateRecord", 0, 0);
     Ov002_InitStateRecord();
-    kh_debug_mark("field ctor: records initialized", 0, 0);
+    kh_debug_mark("field ctor: InitStateRecord ok", 0, 0);
 
     Ov002_World_ClearByte8C98();
     Ov002_World_ClearPair8D7C();
