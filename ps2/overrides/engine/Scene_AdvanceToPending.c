@@ -1,0 +1,94 @@
+/* PS2 debug override: trace the exact release/load/instantiate boundary between scenes. */
+#include "platform/kh_platform.h"
+
+typedef struct SceneEntry {
+    int overlayId;
+    void *classDesc;
+} SceneEntry;
+
+typedef struct SceneCtl {
+    void *obj;
+    SceneEntry *entry;
+    int curId;
+    int pendId;
+    int pendArg;
+} SceneCtl;
+
+extern void kh_debug_stage(const char *stage, int a, int b);
+extern int data_0204bda4;
+extern char gSceneCtl[];
+extern SceneEntry gSceneTable[];
+extern void *data_0204c02c;
+
+extern int Instance_ReleaseIfDead(void *obj);
+extern void UnloadOverlaySync(int module, int overlayId);
+extern void Callbacks_Init(void);
+extern void HeapState_Recreate(void *);
+extern void LoadOverlaySync(int module, int overlayId);
+extern void *InstantiateClass(void *classDesc, int arg);
+extern void Word_Set(void *obj, int);
+
+int Scene_AdvanceToPending(void)
+{
+    SceneCtl *s = (SceneCtl *)gSceneCtl;
+    static void *lastObj;
+    static int lastPend;
+
+    if (s->obj != 0) {
+        if (s->pendId != 0 && (lastObj != s->obj || lastPend != s->pendId)) {
+            lastObj = s->obj;
+            lastPend = s->pendId;
+            kh_debug_stage("scene advance: release current?", s->curId, s->pendId);
+        }
+
+        if (Instance_ReleaseIfDead(s->obj) != 0) {
+            kh_debug_stage("scene advance: current is dead", s->curId, s->pendId);
+            if (s->entry->overlayId != -1) {
+                kh_debug_stage("scene advance: unload current ov", s->entry->overlayId, s->curId);
+                UnloadOverlaySync(0, s->entry->overlayId);
+                kh_debug_stage("scene advance: current ov unloaded", s->entry->overlayId, s->curId);
+            }
+
+            kh_debug_stage("scene advance: callbacks init", s->curId, s->pendId);
+            Callbacks_Init();
+            kh_debug_stage("scene advance: recreate heap", s->curId, s->pendId);
+            HeapState_Recreate(data_0204c02c);
+            kh_debug_stage("scene advance: heap recreated", s->curId, s->pendId);
+
+            s->obj = 0;
+            s->curId = 0;
+        }
+    }
+
+    if (s->obj == 0) {
+        int id = s->pendId;
+        if (id != 0) {
+            SceneEntry *ent = &gSceneTable[id];
+            int ov = ent->overlayId;
+
+            kh_debug_stage("scene advance: begin pending", id, ov);
+            if (ov != -1) {
+                kh_debug_stage("scene advance: LoadOverlaySync", id, ov);
+                LoadOverlaySync(0, ov);
+                kh_debug_stage("scene advance: overlay loaded", id, ov);
+            }
+
+            kh_debug_stage("scene advance: InstantiateClass", id, s->pendArg);
+            {
+                void *obj = InstantiateClass(ent->classDesc, s->pendArg);
+                kh_debug_stage("scene advance: class instantiated", id, (int)obj);
+                s->obj = obj;
+                s->entry = ent;
+                kh_debug_stage("scene advance: Word_Set", id, 1);
+                Word_Set(obj, 1);
+                kh_debug_stage("scene advance: Word_Set returned", id, 1);
+            }
+
+            s->curId = s->pendId;
+            s->pendId = 0;
+            s->pendArg = 0;
+            kh_debug_stage("scene advance: complete", s->curId, 0);
+        }
+    }
+    return 1;
+}
