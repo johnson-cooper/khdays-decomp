@@ -83,6 +83,11 @@ if [ "${1:-}" != "--quick" ]; then
     echo "== [4/6] generating link glue"
     "$PY" ps2/tools/gen_link.py || die "gen_link.py failed"
 fi
+# PS2BUILD places target ldflags before libraries and currently has no post-library
+# ldflags field.  The game opens a --start-group in ps2.yaml because its hundreds of
+# static archives have circular references, so patch the generated Ninja target to
+# put --end-group at the end of its libs response-file value.
+"$PY" ps2/tools/fix_ps2build_link_group.py || die "fix_ps2build_link_group.py failed"
 echo "== [5/6] ps2build build"
 ps2build build || die "ps2build build failed (errors above)"
 echo "== [6/6] auditing R5900 64-bit loads/stores"
