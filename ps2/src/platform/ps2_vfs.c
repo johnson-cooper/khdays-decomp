@@ -18,7 +18,7 @@
  * of reads: 174 tiny/random misses each pulled 128 KiB and the two slots thrashed.  More, smaller
  * slots retain scattered hot regions and cap a small miss at 16 KiB; requests at least that large
  * bypass the cache and read exactly into their destination.  Streamed music has its own descriptor
- * and keeps two 128 KiB windows because its planar stereo reads alternate between two long runs.
+ * with eight 64 KiB windows: each concurrent stream run (player x channel) keeps its own.
  *
  * Seek cursors.  USB/BDM storage goes through bdmfs_fatfs, whose FatFs is built with
  * FF_USE_FASTSEEK 0 and FF_FS_TINY 1: an lseek to the same or a later cluster walks forward from
@@ -51,12 +51,18 @@
 
 #define SCENE_READAHEAD (16 * 1024)
 #define SCENE_READ_WINDOWS 16
-#define STREAM_READAHEAD (128 * 1024)
-#define STREAM_READ_WINDOWS 2
+/* Streamed music: 8 windows of 64 KiB (512 KiB).  Hardware stats after loading a save: 361 raw
+ * stream reads, 359 of them with a seek - with two 128 KiB windows and two seek cursors, more than
+ * two concurrent stream runs (players x channels) evict each other, so a small request refills and
+ * seeks.  Eight windows and cursors keep every run on its own.  Windows stay large: an earlier
+ * build with 16 KiB stream windows starved the music on a real console (per-request overhead on
+ * USB 1.1); 64 KiB halves the cost of a miss without that. */
+#define STREAM_READAHEAD (64 * 1024)
+#define STREAM_READ_WINDOWS 8
 #define MAX_READ_WINDOWS SCENE_READ_WINDOWS
-#define KH_MAX_CURSORS 6
-#define SCENE_CURSORS KH_MAX_CURSORS
-#define STREAM_CURSORS 2         /* left and right channel runs */
+#define KH_MAX_CURSORS 8
+#define SCENE_CURSORS 6
+#define STREAM_CURSORS 8         /* one per concurrent stream run (players x channels) */
 
 typedef struct KhCursor {
     int fd;                /* -1: not opened yet */
@@ -93,6 +99,7 @@ struct KhFile {
     int low_priority;      /* streamed music: yields the device to game-data reads */
     /* raw-read statistics (all files; shown for the music stream on the debug screens) */
     uint32_t st_raw, st_seeks, st_defers;
+    uint64_t st_logical;
     uint64_t st_bytes, st_io_us;
 };
 
@@ -346,10 +353,8 @@ KhFile *kh_file_open(const char *path, int write)
 KhFile *kh_file_open_stream(const char *path)
 {
     /* A separate descriptor is essential: lseek/read positions and read-ahead metadata are
-     * mutable.  Stream data is planar, so the worker alternates between distant left/right
-     * regions.  Preserve the original two 128 KiB windows for that access pattern; applying the
-     * scene loader's 16 KiB random-read policy here causes constant physical refills and audible
-     * starvation on a real console. */
+     * mutable and the music worker runs concurrently with the game thread.  See STREAM_READAHEAD
+     * for the window layout. */
     KhFile *f = file_open(path, 0, STREAM_READAHEAD, STREAM_READ_WINDOWS, 0, STREAM_CURSORS);
     if (f) {
         f->low_priority = 1;
@@ -450,7 +455,8 @@ int kh_vfs_stream_stats(char *out, int n)
     const KhFile *f = g_stream_file;
     if (!f)
         return snprintf(out, (size_t)n, "stream: -");
-    return snprintf(out, (size_t)n, "stream: raw %u %uK seek %u defer %u io %ums avg %uus",
+    return snprintf(out, (size_t)n, "stream: log %uK raw %u %uK seek %u defer %u io %ums avg %uus",
+                    (unsigned)(f->st_logical / 1024u),
                     (unsigned)f->st_raw, (unsigned)(f->st_bytes / 1024u), (unsigned)f->st_seeks,
                     (unsigned)f->st_defers, (unsigned)(f->st_io_us / 1000u),
                     (unsigned)(f->st_raw ? f->st_io_us / f->st_raw : 0));
@@ -497,6 +503,7 @@ static int32_t file_read_at(KhFile *f, uint32_t offset, void *dst, uint32_t size
         size = f->size - pos;
     if (f->profile_pack)
         kh_loadprof_logical(offset, size);
+    f->st_logical += size;
 
     kh_prof_begin(KH_PROF_LOAD);
     while (done < size) {
