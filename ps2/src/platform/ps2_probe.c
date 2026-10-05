@@ -181,9 +181,17 @@ void kh_debug_stage_overlay(void)
                 const KhProfStats *ps = kh_prof_stats();
                 int f10 = (int)(ps->fps * 10.0f);
                 kh_video_debug_text(8, y - 70, 0xffffff,
-                                    "PERF fps %d.%d mode %d gamevb %u vb %u",
+                                    "PERF fps %d.%d mode %d gamevb %u vb %u aud %uus load %uus",
                                     f10 / 10, f10 % 10, (int)gObjSystem,
-                                    data_027e0088, (unsigned)kh_vblank_count());
+                                    data_027e0088, (unsigned)kh_vblank_count(),
+                                    (unsigned)ps->zone_us[KH_PROF_AUDIO],
+                                    (unsigned)ps->zone_us[KH_PROF_LOAD]);
+                {
+                    extern int kh_vfs_stream_stats(char *out, int n);
+                    char sl[100];
+                    kh_vfs_stream_stats(sl, (int)sizeof sl);
+                    kh_video_debug_text(8, y - 84, 0xffffff, "%s", sl);
+                }
             }
             if (scene[2] == 5) {
                 kh_video_debug_text(8, y - 28, 0xffffff,

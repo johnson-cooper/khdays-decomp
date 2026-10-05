@@ -89,6 +89,14 @@ static void report(uint32_t now, int screen)
                 n++;
             }
         }
+        {
+            extern int kh_vfs_stream_stats(char *out, int n);
+            if (n < 12) {
+                kh_vfs_stream_stats(text[n], (int)sizeof text[n]);
+                lines[n] = text[n];
+                n++;
+            }
+        }
 
         for (id = 1; id < 64 && n < 12; id++) {
             ee_thread_status_t st;

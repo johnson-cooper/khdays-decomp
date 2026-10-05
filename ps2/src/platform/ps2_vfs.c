@@ -45,6 +45,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <kernel.h>
+#include <delaythread.h>
 #include <io_common.h>
 #include <fileXio_rpc.h>
 
@@ -88,8 +89,20 @@ struct KhFile {
     int ncursors;          /* descriptors this file may use (1 for writable files) */
     uint32_t cursor_age;
     KhCursor cur[KH_MAX_CURSORS];
-    char full_path[320];   /* to open further cursors */
+    char full_path[320];
+    int low_priority;      /* streamed music: yields the device to game-data reads */
+    /* raw-read statistics (all files; shown for the music stream on the debug screens) */
+    uint32_t st_raw, st_seeks, st_defers;
+    uint64_t st_bytes, st_io_us;
 };
+
+/* Game-data reads waiting for or using the device right now.  fileXio serializes every EE file
+ * RPC behind one lock, so a music refill issued while the game is loading makes the game wait
+ * for the whole refill.  The music stream buffers far more than the deferral below. */
+static volatile int g_hi_io_busy;
+#define LOW_PRIORITY_MAX_DEFER_MS 100
+
+static KhFile *g_stream_file;   /* the music stream descriptor, for the debug screens */
 
 static char g_boot_dir[256] = "host:";
 static char g_boot_dev[16] = "host";
@@ -306,6 +319,21 @@ static KhFile *file_open(const char *path, int write, uint32_t read_ahead,
             for (i = 0; i < read_windows; i++)
                 f->win[i].data = f->cache + i * read_ahead;
         }
+        /* Seek cursors only pay off on big files (the pack); open them all now, on the opening
+         * thread.  Opening them lazily from the music worker raced the game thread's own file
+         * calls inside the C library's descriptor table. */
+        if (f->size < (4u << 20))
+            f->ncursors = 1;
+        for (i = 1; i < f->ncursors; i++) {
+            int extra = io_open(full, O_RDONLY, 0666);
+            if (extra < 0) {
+                f->ncursors = i;
+                break;
+            }
+            f->cur[i].fd = extra;
+            f->cur[i].raw_pos = 0;          /* a fresh descriptor starts at offset 0 */
+            f->cur[i].raw_pos_valid = 1;
+        }
     }
     return f;
 }
@@ -322,45 +350,30 @@ KhFile *kh_file_open_stream(const char *path)
      * regions.  Preserve the original two 128 KiB windows for that access pattern; applying the
      * scene loader's 16 KiB random-read policy here causes constant physical refills and audible
      * starvation on a real console. */
-    return file_open(path, 0, STREAM_READAHEAD, STREAM_READ_WINDOWS, 0, STREAM_CURSORS);
+    KhFile *f = file_open(path, 0, STREAM_READAHEAD, STREAM_READ_WINDOWS, 0, STREAM_CURSORS);
+    if (f) {
+        f->low_priority = 1;
+        g_stream_file = f;
+    }
+    return f;
 }
 
-/* The device's file position is shared by lseek/read, so the pair must live in one I/O
- * critical region.  Do not implement this in terms of io_lseek()+io_read(): that would
- * release ownership between the two operations. */
-/* The cursor to read `off` with: the opened descriptor at or nearest before it (FatFs walks
- * forward from there), else a not-yet-opened slot, else the least recently used descriptor. */
+/* The cursor to read `off` with: the descriptor at or nearest before it (FatFs walks forward from
+ * there), else the least recently used one. */
 static KhCursor *pick_cursor(KhFile *f, uint32_t off)
 {
-    KhCursor *best = NULL, *lru = NULL, *spare = NULL;
+    KhCursor *best = NULL, *lru = NULL;
     int c;
     for (c = 0; c < f->ncursors; c++) {
         KhCursor *k = &f->cur[c];
-        if (k->fd < 0) {
-            if (!spare)
-                spare = k;
+        if (k->fd < 0)
             continue;
-        }
         if (k->raw_pos_valid && k->raw_pos <= off && (!best || k->raw_pos > best->raw_pos))
             best = k;
         if (!lru || k->age < lru->age)
             lru = k;
     }
-    if (best)
-        return best;
-    if (spare) {
-        int w = kh_io_begin_tag("VFS cursor open");
-        int fd = open(f->full_path, O_RDONLY, 0666);
-        kh_io_end(w);
-        if (fd >= 0) {
-            spare->fd = fd;
-            spare->raw_pos = 0;           /* a fresh descriptor starts at offset 0 */
-            spare->raw_pos_valid = 1;
-            return spare;
-        }
-        f->ncursors = (int)(spare - f->cur);   /* device refused: stop trying */
-    }
-    return lru;
+    return best ? best : lru;
 }
 
 /* The device's file position is shared by lseek/read, so the pair must live in one I/O
@@ -371,13 +384,29 @@ static int raw_read_at(KhFile *f, uint32_t off, void *dst, uint32_t n,
 {
     uint64_t start = 0;
     KhCursor *k = pick_cursor(f, off);
+    uint64_t t0;
     int seek;
     int w;
     int r;
     if (!k)
         return -1;
+    if (f->low_priority) {
+        int waited = 0;
+        if (g_hi_io_busy)
+            f->st_defers++;
+        while (g_hi_io_busy && waited < LOW_PRIORITY_MAX_DEFER_MS) {
+            DelayThread(2000);
+            waited += 2;
+        }
+    } else {
+        int old = DIntr();
+        g_hi_io_busy++;
+        if (old)
+            EIntr();
+    }
     k->age = ++f->cursor_age;
     seek = !k->raw_pos_valid || k->raw_pos != off;
+    t0 = kh_time_us();
     if (f->profile_pack) {
         kh_loadprof_raw_begin(req_off, req_size, off, n, window);
         if (seek)
@@ -398,9 +427,33 @@ static int raw_read_at(KhFile *f, uint32_t off, void *dst, uint32_t n,
         }
     }
     kh_io_end(w);
+    f->st_raw++;
+    if (seek)
+        f->st_seeks++;
+    if (r > 0)
+        f->st_bytes += (uint32_t)r;
+    f->st_io_us += kh_time_us() - t0;
+    if (!f->low_priority) {
+        int old = DIntr();
+        g_hi_io_busy--;
+        if (old)
+            EIntr();
+    }
     if (f->profile_pack)
         kh_loadprof_raw_end(r, (uint32_t)(kh_time_us() - start));
     return r;
+}
+
+/* Music-stream I/O so far, for the debug overlay and the stall screen. */
+int kh_vfs_stream_stats(char *out, int n)
+{
+    const KhFile *f = g_stream_file;
+    if (!f)
+        return snprintf(out, (size_t)n, "stream: -");
+    return snprintf(out, (size_t)n, "stream: raw %u %uK seek %u defer %u io %ums avg %uus",
+                    (unsigned)f->st_raw, (unsigned)(f->st_bytes / 1024u), (unsigned)f->st_seeks,
+                    (unsigned)f->st_defers, (unsigned)(f->st_io_us / 1000u),
+                    (unsigned)(f->st_raw ? f->st_io_us / f->st_raw : 0));
 }
 
 static KhReadWindow *find_window(KhFile *f, uint32_t pos)
@@ -580,6 +633,8 @@ int kh_file_close(KhFile *f)
                 io_close(f->cur[c].fd);
     }
     file_unlock(f);
+    if (f == g_stream_file)
+        g_stream_file = NULL;
     DeleteSema(f->lock_sema);
     kh_free(f->cache);
     kh_free(f);
