@@ -50,9 +50,11 @@ static void crash_report(void)
 {
     const char *screen_line[11];
     extern volatile const char *kh_watchdog_mark;
-    extern char gSceneCtl[];
+    /* weak: the platform-test ELF links this library without the game */
+    extern char gSceneCtl[] __attribute__((weak));
+    static const int k_no_scene[5];
     const EE_RegFrame *f = &g_snap;
-    int *scene = (int *)gSceneCtl;
+    const int *scene = gSceneCtl ? (const int *)gSceneCtl : k_no_scene;
     int code, i;
 
     EIntr();                    /* the fault may have hit inside a DIntr() section */
