@@ -520,3 +520,63 @@ void kh_video_end_frame(void)
     kh_vblank_wait();
     kh_video_flip();
 }
+
+/*
+ * Draw one line of debug text IMMEDIATELY onto the buffer that is on the TV now (not the frame
+ * being built), over a black bar.  For hangs that disable EE interrupts: nothing can report after
+ * such a hang (no VBlank, no watchdog thread), so a breadcrumb is only useful if it is already
+ * visible when the CPU stops.  Main thread only, between frames: kh_video_submit_frame has waited
+ * for the previous frame's DMA and FINISH, so GIF/VIF are idle.  Everything set here (FRAME_1,
+ * TEST, ZBUF mask, PRIM, TEX0/1) is set again by the next kh_video_begin_frame / layer setup.
+ */
+void kh_video_live_text(int x, int y, uint32_t rgb, const char *text)
+{
+    static KhGsPacket p;
+    int n, i, front;
+
+    if (!g_video_ready || !text)
+        return;
+    if (!p.base)
+        kh_gs_packet_init(&p, 1024);
+    n = (int)strlen(text);
+    if (n > 100)
+        n = 100;
+    front = g_draw ^ 1;               /* the flipped (displayed) buffer, flip pending or not */
+
+    p.len = 0;
+    p.tag = -1;
+    kh_gs_packet_ad_begin(&p, 10);
+    ad(&p, GS_REG_FRAME_1, GS_SET_FRAME(g_fbp[front] / 2048, g_w / 64, FB_PSM, 0));
+    ad(&p, GS_REG_ZBUF_1, GS_SET_ZBUF(g_zbp / 2048, Z_PSM, 1));          /* no Z writes */
+    ad(&p, GS_REG_XYOFFSET_1, GS_SET_XYOFFSET(KH_GS_OFS << 4, KH_GS_OFS << 4));
+    ad(&p, GS_REG_SCISSOR_1, GS_SET_SCISSOR(0, g_w - 1, 0, g_h - 1));
+    ad(&p, GS_REG_TEST_1, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, 1));         /* Z always */
+    ad(&p, GS_REG_PRIM, GS_SET_PRIM(GS_PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0));
+    ad(&p, GS_REG_RGBAQ, GS_SET_RGBAQ(0, 0, 0, 0x80, 0x3f800000));
+    ad(&p, GS_REG_XYZ2, GS_SET_XYZ((KH_GS_OFS + x - 2) << 4, (KH_GS_OFS + y - 2) << 4, 0));
+    ad(&p, GS_REG_XYZ2, GS_SET_XYZ((KH_GS_OFS + g_w) << 4, (KH_GS_OFS + y + 10) << 4, 0));
+    ad(&p, GS_REG_TEST_1, GS_SET_TEST(1, 6, 0, 0, 0, 0, 1, 1));         /* alpha > 0, Z always */
+    kh_gs_packet_ad_begin(&p, 4);
+    ad(&p, GS_REG_TEX0_1, GS_SET_TEX0(g_fontbp / 64, 2, GS_PSM_8, 7, 7, 1, 0, g_fontclut / 64, GS_PSM_32, 0, 0, 1));
+    ad(&p, GS_REG_TEX1_1, GS_SET_TEX1(0, 0, 0, 0, 0, 0, 0));
+    ad(&p, GS_REG_PRIM, GS_SET_PRIM(GS_PRIM_SPRITE, 0, 1, 0, 0, 0, 1, 0, 0));
+    ad(&p, GS_REG_RGBAQ, GS_SET_RGBAQ((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 0x80, 0x3f800000));
+    if (n > 0) {
+        kh_gs_packet_q(&p, GIF_SET_TAG(n, 1, 0, 0, GIF_FLG_PACKED, 4),
+                       (uint64_t)GIF_REG_UV | ((uint64_t)GIF_REG_XYZ2 << 4) | ((uint64_t)GIF_REG_UV << 8) |
+                           ((uint64_t)GIF_REG_XYZ2 << 12));
+        for (i = 0; i < n; i++) {
+            unsigned char c = (unsigned char)text[i];
+            int u = (c & 15) * 8, v = (c >> 4) * 8;
+            int sx = KH_GS_OFS + x + i * 8, sy = KH_GS_OFS + y;
+            kh_gs_packet_q(&p, KH_PK_UV_LO(u << 4, v << 4), 0);
+            kh_gs_packet_q(&p, KH_PK_XYZ2_LO(sx << 4, sy << 4), KH_PK_XYZ2_HI(0));
+            kh_gs_packet_q(&p, KH_PK_UV_LO((u + 8) << 4, (v + 8) << 4), 0);
+            kh_gs_packet_q(&p, KH_PK_XYZ2_LO((sx + 8) << 4, (sy + 8) << 4), KH_PK_XYZ2_HI(0));
+        }
+    }
+    kh_gs_packet_ad_begin(&p, 2);
+    ad(&p, GS_REG_FRAME_1, GS_SET_FRAME(g_fbp[g_draw] / 2048, g_w / 64, FB_PSM, 0));
+    ad(&p, GS_REG_TEST_1, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, 2));
+    kh_gs_packet_send(&p);
+}

@@ -128,6 +128,36 @@ static int ps2_handoff_trace_active(void)
  */
 #define PS2_PACING_MAX_WAITS 8
 
+/*
+ * Live handoff trace arming (ps2_probe.c kh_debug_live_marks).  Armed at the top of the frame
+ * after the calendar parent requested the field (cur=5, pend!=0): that frame's BootTask pass is
+ * the protected ov004 teardown + ov002 load.  Disarmed once the new scene has presented
+ * PS2_LIVE_TRACE_PRESENTS frames, so normal gameplay is not slowed by per-mark GS uploads.
+ */
+#define PS2_LIVE_TRACE_PRESENTS 90
+static int g_live_armed;
+static int g_live_presents;
+
+extern void kh_debug_live_marks(int on);
+
+static void ps2_live_trace_update(int after_present)
+{
+    int *scene = (int *)gSceneCtl;
+
+    if (!after_present) {
+        if (!g_live_armed && scene[2] == SCENE_CALENDAR && scene[3] != 0) {
+            g_live_armed = 1;
+            g_live_presents = 0;
+            kh_debug_live_marks(1);
+        }
+        return;
+    }
+    if (g_live_armed && scene[2] != SCENE_CALENDAR && ++g_live_presents >= PS2_LIVE_TRACE_PRESENTS) {
+        g_live_armed = 0;
+        kh_debug_live_marks(0);
+    }
+}
+
 extern unsigned int OS_GetIrqMask(void);
 extern void kh_debug_loop_mark(const char *stage, int a, int b);
 
@@ -178,6 +208,7 @@ void kh_game_main(void) {
 
         OS_WaitVBlankIntr();
 
+        ps2_live_trace_update(0);
         frameTarget = VBlank_GetCount();
         trace = ps2_handoff_trace_active();
         kh_watchdog_fast_report = ps2_calendar_active();   /* covers the ov004 -> ov002 load too */
@@ -238,6 +269,7 @@ void kh_game_main(void) {
         if (trace)
             kh_debug_loop_mark("main: present", frameTarget, gPauseMode);
         KhNitro_PresentFrame();
+        ps2_live_trace_update(1);
         if (gPauseMode != 1)
             data_0204c215 = 1;
 

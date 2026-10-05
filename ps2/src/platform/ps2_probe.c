@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <kernel.h>
 
 #if KH_PS2_DEBUG
 static char g_stage[160];
@@ -23,6 +24,56 @@ static int g_calendar_entry_phase = -1;
 static unsigned int g_calendar_calls;
 /* main-loop step (kh_debug_loop_mark): watchdog/stall screens only, never the overlay DBG line */
 static char g_loop_mark[96];
+#endif
+
+/*
+ * Live handoff trace.  While armed (main.c: from the frame the calendar requests the field until
+ * the field has presented a while), every breadcrumb from the main thread is drawn IMMEDIATELY on
+ * the picture currently on the TV, one numbered line per mark in a rolling 20-line list.  This is
+ * for hangs that run with EE interrupts disabled: those stop the VBlank interrupt, so neither the
+ * watchdog nor the crash/stall screens can ever draw, and only text already on screen survives.
+ * The highest number is the last step the CPU reached.
+ */
+#if KH_PS2_DEBUG
+#define LIVE_ROWS 20
+static int g_live_on;
+static int g_live_tid = -1;
+static unsigned int g_live_seq;
+#endif
+
+void kh_debug_live_marks(int on)
+{
+#if KH_PS2_DEBUG
+    extern void kh_video_live_text(int x, int y, uint32_t rgb, const char *text);
+    if (on && !g_live_on) {
+        g_live_tid = GetThreadId();
+        g_live_on = 1;
+        kh_video_live_text(8, 24, 0x40ffff, "LIVE handoff trace: highest number = last step reached");
+        return;
+    }
+    if (!on)
+        g_live_on = 0;
+#else
+    (void)on;
+#endif
+}
+
+#if KH_PS2_DEBUG
+static void live_mark(const char *text)
+{
+    extern void kh_video_live_text(int x, int y, uint32_t rgb, const char *text);
+    char line[112];
+    unsigned int row;
+
+    if (!g_live_on || GetThreadId() != g_live_tid)
+        return;
+    row = g_live_seq % LIVE_ROWS;
+    snprintf(line, sizeof line, "%04u %s", g_live_seq & 0xffffu, text);
+    g_live_seq++;
+    kh_video_live_text(8, 40 + (int)row * 12, 0xffff40, line);
+    /* mark where the next line goes so the newest is easy to find even after wrapping */
+    kh_video_live_text(8, 40 + (int)((row + 1) % LIVE_ROWS) * 12, 0x808080, "----");
+}
 #endif
 
 /* ov004 phase at the START of Ov004_StepSceneFrame, before its phase handler runs.  The CAL line
@@ -46,6 +97,7 @@ void kh_debug_loop_mark(const char *stage, int a, int b)
     extern volatile const char *kh_watchdog_mark;
     snprintf(g_loop_mark, sizeof g_loop_mark, "%s a=%d b=%d", stage ? stage : "(null)", a, b);
     kh_watchdog_mark = g_loop_mark;
+    live_mark(g_loop_mark);
 #else
     (void)stage; (void)a; (void)b;
 #endif
@@ -79,6 +131,7 @@ void kh_debug_mark(const char *stage, int a, int b)
     g_stage_b = b;
     snprintf(mark, sizeof mark, "%s a=%d b=%d", g_stage, a, b);
     kh_watchdog_mark = mark;
+    live_mark(mark);
 #else
     (void)stage; (void)a; (void)b;
 #endif

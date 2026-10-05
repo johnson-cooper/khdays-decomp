@@ -89,6 +89,7 @@ targets:
       - ps2/overrides/overlays/Ov000_TickBootFadeTransition.c
       - ps2/overrides/overlays/Ov000_WaitSubMenuResult.c
       - ps2/overrides/overlays/Ov002_ConstructGameplayScene.c
+      - ps2/overrides/overlays/Ov004_ReleaseSceneObjects.c
       - ps2/overrides/overlays/Ov004_RunDelayedProtectionChecks.c
       - ps2/overrides/overlays/Ov004_StepMissionSelectScene.c
       - ps2/overrides/overlays/Ov004_StepSceneFrame.c
@@ -14100,7 +14101,6 @@ targets:
       - src/overlays/scenes/ov004_calendar/Ov004_RecordFilter_KindNonZero.c
       - src/overlays/scenes/ov004_calendar/Ov004_RecordFilter_KindZero.c
       - src/overlays/scenes/ov004_calendar/Ov004_ReleaseHandleGridAndList.c
-      - ps2/gen/src/src/overlays/scenes/ov004_calendar/Ov004_ReleaseSceneObjects.c
       - src/overlays/scenes/ov004_calendar/Ov004_RemoveLoadoutEntries.c
       - src/overlays/scenes/ov004_calendar/Ov004_ResetPartyMemberAndLayout.c
       - src/overlays/scenes/ov004_calendar/Ov004_ResolveMissionRank.c
