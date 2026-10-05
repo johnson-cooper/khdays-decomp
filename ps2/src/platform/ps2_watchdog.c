@@ -18,6 +18,7 @@
 
 volatile uint32_t kh_watchdog_progress;
 volatile const char *kh_watchdog_mark = "boot";
+volatile int kh_watchdog_fast_report;
 
 #if KH_PS2_DEBUG
 static int g_sema = -1;
@@ -148,8 +149,11 @@ static void watchdog_thread(void *arg)
         stalled++;
         if (now == 0)
             continue;               /* still in boot loading: the loop has not run yet */
-        if (stalled == 1)
-            report(now, 0);         /* 2 s: ring only; transient loads must not disturb the GS */
+        if (stalled == 1) {
+            report(now, 0);
+            if (kh_watchdog_fast_report)
+                report(now, 1);     /* calendar diagnostic: show exact stalled call after 2 s */
+        }
         else if (stalled == 5)
             report(now, 1);         /* 10 s: GS-safe visible report for a sustained stall */
         else if (stalled > 5 && (stalled % 5) == 0)

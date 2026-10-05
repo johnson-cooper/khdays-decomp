@@ -13,7 +13,31 @@
 static char g_stage[160];
 static int g_stage_a;
 static int g_stage_b;
+static int g_calendar_phase;
+static int g_calendar_gate;
+static int g_calendar_position;
+static int g_calendar_elapsed;
+static int g_calendar_phase_frame;
+static int g_calendar_complete;
+static unsigned int g_calendar_calls;
 #endif
+
+void kh_debug_calendar_state(int phase, int gate, int position, int elapsed,
+                             int phase_frame, int complete)
+{
+#if KH_PS2_DEBUG
+    g_calendar_phase = phase;
+    g_calendar_gate = gate;
+    g_calendar_position = position;
+    g_calendar_elapsed = elapsed;
+    g_calendar_phase_frame = phase_frame;
+    g_calendar_complete = complete;
+    g_calendar_calls++;
+#else
+    (void)phase; (void)gate; (void)position; (void)elapsed;
+    (void)phase_frame; (void)complete;
+#endif
+}
 
 void kh_debug_mark(const char *stage, int a, int b)
 {
@@ -66,6 +90,16 @@ void kh_debug_stage_overlay(void)
             kh_video_debug_text(8, y - 14, 0xffffff,
                                 "SCN cur=%d pend=%d arg=%d state=%d flags=%x",
                                 scene[2], scene[3], scene[4], state, flags);
+            if (scene[2] == 5) {
+                kh_video_debug_text(8, y - 28, 0xffffff,
+                                    "CAL ph=%d gate=%d pos=%x age=%d",
+                                    g_calendar_phase, g_calendar_gate,
+                                    g_calendar_position, g_calendar_elapsed);
+                kh_video_debug_text(8, y - 42, 0xffffff,
+                                    "CAL pfrm=%d done=%d calls=%u",
+                                    g_calendar_phase_frame, g_calendar_complete,
+                                    g_calendar_calls);
+            }
         }
     }
 #endif
