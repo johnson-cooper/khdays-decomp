@@ -34,8 +34,17 @@ static const char *const k_cause[32] = {
  * crash_report() in ordinary thread context, on a dedicated stack (the faulting stack may be the
  * problem).  crash_report draws the GS screen first and only then touches stdout.
  */
+/* Optional describer for an EE thread id, installed by the Nitro OS layer (nitro_os.c) so the
+ * report can name the game thread (its OS_CreateThread entry) without a link dependency on it. */
+void (*volatile kh_crash_thread_hook)(int tid, char *out, int n);
+
+/* code range for the stack scan (file scope weak: the platform-test linkfile may not define it) */
+extern char _ftext[];
+extern char _etext[] __attribute__((weak));
+extern char _end[];
+
 static EE_RegFrame g_snap;
-static char g_line[11][128];
+static char g_line[12][128];
 static int g_tid;
 static u32 g_live_status, g_live_cause, g_live_epc, g_live_badvaddr;
 static u8 g_report_stack[16 * 1024] __attribute__((aligned(16)));
@@ -76,22 +85,49 @@ static void crash_report(void)
     /* no game symbols here: the platform-test ELF links this library without the game */
     snprintf(g_line[8], sizeof g_line[8], "frame lo %08x hi %08x errorepc %08x",
              (unsigned)f->lo, (unsigned)f->hi, (unsigned)f->errorepc);
-    snprintf(g_line[9], sizeof g_line[9], "Map frame EPC and RA with build/khdays-ps2.map");
-    g_line[10][0] = 0;
+    /* which game thread (EPC/RA are useless after a jump through a bad function pointer) */
+    snprintf(g_line[9], sizeof g_line[9], "thread %d: -", g_tid);
+    if (kh_crash_thread_hook)
+        kh_crash_thread_hook(g_tid, g_line[9], (int)sizeof g_line[9]);
 
-    for (i = 0; i < 10; i++)
+    /* Stack scan: words on the faulting stack that point into code are saved return addresses
+     * (and some stale ones) - a rough backtrace to look up in build/khdays-ps2.map. */
+    {
+        uintptr_t lo = (uintptr_t)_ftext;
+        uintptr_t hi = _etext ? (uintptr_t)_etext : (uintptr_t)_end;
+        uintptr_t sp = f->sp[0] & ~(uintptr_t)3;
+        u32 found[12];
+        int nf = 0, w;
+        if (sp >= 0x00100000u && sp < 0x02000000u - 0x800u) {
+            for (w = 0; w < 0x200 && nf < 12; w++) {
+                u32 v = ((const u32 *)sp)[w];
+                if (v >= lo && v < hi && !(v & 3u))
+                    found[nf++] = v;
+            }
+        }
+        for (i = 0; i < 2; i++) {
+            int j, at = 0;
+            at += snprintf(g_line[10 + i] + at, sizeof g_line[10 + i] - at, "stack%s", i ? "+" : ":");
+            for (j = i * 6; j < nf && j < i * 6 + 6; j++)
+                at += snprintf(g_line[10 + i] + at, sizeof g_line[10 + i] - at, " %08x", (unsigned)found[j]);
+            if (nf <= i * 6)
+                snprintf(g_line[10 + i] + at, sizeof g_line[10 + i] - at, i ? "" : " (none)");
+        }
+    }
+
+    for (i = 0; i < 12; i++)
         screen_line[i] = g_line[i];
-    if (!ps2_gs_crash_screen("Kingdom Hearts 358/2 Days (PS2) - crash", screen_line, 10)) {
+    if (!ps2_gs_crash_screen("Kingdom Hearts 358/2 Days (PS2) - crash", screen_line, 12)) {
         /* Very early exception, before kh_video_init(): retain the SDK fallback. */
         init_scr();
         scr_clear();
         scr_printf("\n  Kingdom Hearts 358/2 Days (PS2) - crash\n\n");
-        for (i = 0; i < 10; i++)
+        for (i = 0; i < 12; i++)
             scr_printf("  %s\n", g_line[i]);
     }
 
     /* Only now risk the IOP: the screen is already up if this blocks. */
-    for (i = 0; i < 10; i++)
+    for (i = 0; i < 12; i++)
         printf("CRASH %s\n", g_line[i]);
     fflush(stdout);
     crash_park();

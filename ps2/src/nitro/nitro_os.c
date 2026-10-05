@@ -114,8 +114,26 @@ OSThread *OS_GetCurrentThread(void)
     return k ? k->os : NULL;
 }
 
+/* crash-report describer (ps2_crash.c): which game thread an EE thread id is */
+static void describe_thread(int tid, char *out, int n)
+{
+    int i;
+    for (i = 0; i < KH_MAX_THREADS; i++) {
+        const KhThread *k = &g_threads[i];
+        if (k->os && k->ee_id == tid) {
+            snprintf(out, (size_t)n, "thread %d: game thread slot %d os %p entry %08x arg %p prio %u%s",
+                     tid, i, (void *)k->os, (unsigned)(uintptr_t)k->func, k->arg,
+                     (unsigned)k->priority, i == 0 ? " (main)" : "");
+            return;
+        }
+    }
+    snprintf(out, (size_t)n, "thread %d: not a game OS thread (platform/audio/IOP helper)", tid);
+}
+
 void OS_InitThread(void)
 {
+    extern void (*volatile kh_crash_thread_hook)(int tid, char *out, int n);
+    kh_crash_thread_hook = describe_thread;
     if (g_threads[0].os)
         return;
     g_threads[0].os = (OSThread *)g_main_os;

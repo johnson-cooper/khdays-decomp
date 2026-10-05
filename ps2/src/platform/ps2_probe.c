@@ -172,6 +172,19 @@ void kh_debug_stage_overlay(void)
             kh_video_debug_text(8, y - 14, 0xffffff,
                                 "SCN cur=%d pend=%d arg=%d state=%d flags=%x",
                                 scene[2], scene[3], scene[4], state, flags);
+            {
+                /* Pacing at a glance: frame-rate mode (gObjSystem byte 0: 0/1 = wait 1/2 VBlanks
+                 * per frame, 2 = none), the game's VBlank counter against the real one (they
+                 * advance together unless the game's VBlank IRQ stopped), and fps. */
+                extern unsigned char gObjSystem;
+                extern unsigned int data_027e0088;
+                const KhProfStats *ps = kh_prof_stats();
+                int f10 = (int)(ps->fps * 10.0f);
+                kh_video_debug_text(8, y - 70, 0xffffff,
+                                    "PERF fps %d.%d mode %d gamevb %u vb %u",
+                                    f10 / 10, f10 % 10, (int)gObjSystem,
+                                    data_027e0088, (unsigned)kh_vblank_count());
+            }
             if (scene[2] == 5) {
                 kh_video_debug_text(8, y - 28, 0xffffff,
                                     "CAL in=%d ph=%d gate=%d pos=%x age=%d",
