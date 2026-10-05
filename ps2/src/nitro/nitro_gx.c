@@ -208,9 +208,32 @@ u32 GX_GetBankForLCDC(void)       { return g_view_banks[VIEW_LCDC]; }
 
 /* ------------------------------------------------------------------ loads */
 
+/*
+ * Source check for every GX_Load* (they are the loaders behind the NNS GFD VRAM-transfer queue,
+ * drained by FrameStep_UpdateTaskQueue each frame).  On the DS a transfer queued with a NULL (or
+ * small) source address reads the ITCM mapped at 0 and copies junk without faulting; on the EE
+ * the same read is a TLB miss below the kernel/ELF.  Hardware: the field's first gameplay frame
+ * in Roxas's room crashed in memcpy(dst, NULL, 0x40) from the transfer queue.  Treat such a
+ * source as nothing to load (the destination keeps its previous contents), and log it.
+ */
+static int load_src_ok(const void *src, u32 ofs, u32 size, int view)
+{
+    static int warned;
+    if ((uintptr_t)src >= 0x00100000u)          /* EE user memory starts above the kernel */
+        return 1;
+    if (size && warned < 16) {
+        warned++;
+        KH_WARN("gx", "GX load from invalid source %p (view %d, offset 0x%x, %u bytes) skipped; "
+                "caller %p", src, view, (unsigned)ofs, (unsigned)size, __builtin_return_address(0));
+    }
+    return 0;
+}
+
 static void view_copy(int view, const void *src, u32 ofs, u32 size)
 {
     const u8 *s = src;
+    if (!load_src_ok(src, ofs, size, view))
+        return;
     while (size) {
         u32 v = kh_nitro_view_to_vram(view, ofs);
         u32 n;
@@ -293,12 +316,12 @@ BGLOADS(3)
 
 void GX_LoadOBJ(const void *s, u32 o, u32 n)  { view_copy(VIEW_OBJ, s, o, n); }
 void GXS_LoadOBJ(const void *s, u32 o, u32 n) { view_copy(VIEW_SUB_OBJ, s, o, n); }
-void GX_LoadOAM(const void *s, u32 o, u32 n)  { memcpy(kh_ds_oam + o, s, n); }
-void GXS_LoadOAM(const void *s, u32 o, u32 n) { memcpy(kh_ds_oam + 0x400 + o, s, n); }
-void GX_LoadBGPltt(const void *s, u32 o, u32 n)   { memcpy(kh_ds_pal + o, s, n); }
-void GX_LoadOBJPltt(const void *s, u32 o, u32 n)  { memcpy(kh_ds_pal + 0x200 + o, s, n); }
-void GXS_LoadBGPltt(const void *s, u32 o, u32 n)  { memcpy(kh_ds_pal + 0x400 + o, s, n); }
-void GXS_LoadOBJPltt(const void *s, u32 o, u32 n) { memcpy(kh_ds_pal + 0x600 + o, s, n); }
+void GX_LoadOAM(const void *s, u32 o, u32 n)  { if (load_src_ok(s, o, n, -1)) memcpy(kh_ds_oam + o, s, n); }
+void GXS_LoadOAM(const void *s, u32 o, u32 n) { if (load_src_ok(s, o, n, -2)) memcpy(kh_ds_oam + 0x400 + o, s, n); }
+void GX_LoadBGPltt(const void *s, u32 o, u32 n)   { if (load_src_ok(s, o, n, -3)) memcpy(kh_ds_pal + o, s, n); }
+void GX_LoadOBJPltt(const void *s, u32 o, u32 n)  { if (load_src_ok(s, o, n, -4)) memcpy(kh_ds_pal + 0x200 + o, s, n); }
+void GXS_LoadBGPltt(const void *s, u32 o, u32 n)  { if (load_src_ok(s, o, n, -5)) memcpy(kh_ds_pal + 0x400 + o, s, n); }
+void GXS_LoadOBJPltt(const void *s, u32 o, u32 n) { if (load_src_ok(s, o, n, -6)) memcpy(kh_ds_pal + 0x600 + o, s, n); }
 
 /* extended palettes: loaded between Begin/End (the banks go to LCDC meanwhile on the DS) */
 void GX_BeginLoadBGExtPltt(void) { }
