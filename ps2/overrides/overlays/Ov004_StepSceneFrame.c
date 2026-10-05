@@ -5,6 +5,17 @@
  * The marks do not alter calendar state; they let the watchdog identify the
  * exact callee that failed to return instead of merely reporting the phase of
  * the last frame that reached the display.
+ *
+ * Phase timing (verified against the canonical routine): the handler is picked
+ * from the phase at the START of the frame.  On the frame where
+ * Ov004_FadeOutTransition (phase 3) sees its time elapse it writes phase 4, and
+ * the rest of that frame still scales, draws and is presented; handler 4
+ * (Ov004_MarkTransitionComplete, +0x5550 = 1) first runs on the NEXT frame.  So
+ * "in=3 ph=4 done=0" is the normal last fade-out frame, not corrupt state.  The
+ * protected parent (class 8/group 15) is linked before this child (same class
+ * key, Obj_LinkNode appends), so it reads done=1 one frame later still, requests
+ * SCENE_FIELD and returns -2; BootTask (key 0, first in the list) tears ov004
+ * down on the pass after that.
  */
 
 #include "platform/kh_platform.h"
@@ -28,6 +39,7 @@ extern void kh_debug_mark(const char *stage, int a, int b);
 extern unsigned long long OS_GetTick(void);
 extern void kh_debug_calendar_state(int phase, int gate, int position, int elapsed,
                                     int phase_frame, int complete);
+extern void kh_debug_calendar_entry(int phase);
 
 int Ov004_StepSceneFrame(void)
 {
@@ -39,6 +51,7 @@ int Ov004_StepSceneFrame(void)
     phase = *(int *)(data_ov004_02051384 + 0xaf8);
     transitionState = *(int *)(data_ov004_02051384 + 0x5584);
 
+    kh_debug_calendar_entry(phase);
     kh_debug_mark("calendar call: phase handler", phase, transitionState);
     table.handlers[phase]();
 

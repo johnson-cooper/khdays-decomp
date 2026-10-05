@@ -151,6 +151,40 @@ static void vblank_service(int force_irq)
 }
 
 #if KH_PS2_DEBUG
+/*
+ * "Alive but not presenting" detector.
+ *
+ * The hang watchdog (ps2_watchdog.c) only fires when OS_WaitVBlankIntr stops being called.  A loop
+ * that keeps waiting for VBlanks but never reaches KhNitro_PresentFrame (the main loop's VBlank
+ * pacing on a frozen game counter, a load/wait loop, ...) leaves the last presented frame on the
+ * TV with its overlay and no report - which is how the DAY 255 card looked "hung in present".
+ * When no frame has been presented for a few seconds, draw a report from the main thread itself,
+ * between frames (nothing else owns the GS packet here), and keep refreshing it twice a second.
+ */
+#define KH_PRESENT_STALL_VBLANKS 300u
+static uint32_t g_presents;
+static uint32_t g_last_present_vb;
+static uint32_t g_stall_drawn_vb;
+
+static void check_present_stall(void)
+{
+    extern uint32_t data_027e0088;    /* the game's VBlank counter (VBlank_GetCount) */
+    extern void kh_debug_present_stall_screen(unsigned idle, unsigned presents, unsigned game_vblank,
+                                              unsigned irq_mask, const void *vblank_fn);
+    uint32_t now = kh_vblank_count();
+
+    if (!g_presents || now - g_last_present_vb < KH_PRESENT_STALL_VBLANKS)
+        return;
+    if (now - g_stall_drawn_vb < 30u)
+        return;
+    g_stall_drawn_vb = now;
+    kh_debug_present_stall_screen((unsigned)(now - g_last_present_vb), (unsigned)g_presents,
+                                  (unsigned)data_027e0088, (unsigned)g_irq_mask,
+                                  (const void *)g_irq_table[0]);
+}
+#endif
+
+#if KH_PS2_DEBUG
 /* Development: poke 1 (PINE) to make the main thread spin here - tests the hang watchdog */
 volatile uint32_t kh_dbg_hang;
 /* Development: poke 1 to make the main thread store to address 1 - tests the crash screen */
@@ -180,6 +214,7 @@ void OS_WaitVBlankIntr(void)
     kh_prof_end(KH_PROF_VBLANK);
     vblank_service(1);
 #if KH_PS2_DEBUG
+    check_present_stall();
     {
         extern volatile const char *kh_watchdog_mark;
         kh_watchdog_mark = "main: frame work";
@@ -243,24 +278,9 @@ uint32_t OS_GetVBlankCount(void) { return g_ds_vblank_count; }
 /* ------------------------------------------------------------ present */
 
 extern void GXi_FlushCommandList(void);
-extern void GXi_DiscardCommandList(void);
 extern void kh_ge_end_frame(void);
 extern void kh_tex3d_frame_sent(void);
 extern void kh_tex3d_new_frame(void);
-
-/*
- * Drop a CPU-built frame without touching VIF/GIF/GS.  Used only for a scene
- * that became dead during its update: the previously submitted frame is already
- * on screen, while trying to render/submit one more frame from the dead scene
- * can hang the real GS/VIF path.
- */
-void KhNitro_DiscardFrame(void)
-{
-    GXi_DiscardCommandList();
-    kh_tex3d_frame_sent();
-    kh_tex3d_new_frame();
-    kh_ge_end_frame();
-}
 
 void KhNitro_PresentFrame(void)
 {
@@ -273,6 +293,10 @@ void KhNitro_PresentFrame(void)
     }
 #endif
     kh_video_submit_frame();
+#if KH_PS2_DEBUG
+    g_presents++;
+    g_last_present_vb = kh_vblank_count();
+#endif
     kh_prof_frame();
     kh_loadprof_frame();
     kh_tex3d_frame_sent();    /* texture conversion scratch is free again */

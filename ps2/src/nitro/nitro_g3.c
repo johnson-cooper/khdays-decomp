@@ -34,21 +34,6 @@ static void flush_buffer(void)
 
 void GXi_FlushCommandList(void) { flush_buffer(); }
 
-/*
- * PS2 scene-handoff escape hatch: abandon buffered G3D commands without decoding
- * them.  A protected scene can mark itself dead during Obj_UpdateAll; presenting
- * that same frame has been observed to wedge real hardware.  In that case the
- * frame is intentionally discarded before its overlay/heap are destroyed, so
- * stale commands must not leak into the replacement scene.
- */
-void GXi_DiscardCommandList(void)
-{
-    NNSG3dGeBuffer *b = data_027e0074;
-    data_027e0078 = 0;
-    if (b)
-        b->idx = 0;
-}
-
 void GX_SendFifoWords(u32 op, const u32 *args, u32 n)
 {
     flush_buffer();

@@ -19,8 +19,37 @@ static int g_calendar_position;
 static int g_calendar_elapsed;
 static int g_calendar_phase_frame;
 static int g_calendar_complete;
+static int g_calendar_entry_phase = -1;
 static unsigned int g_calendar_calls;
+/* main-loop step (kh_debug_loop_mark): watchdog/stall screens only, never the overlay DBG line */
+static char g_loop_mark[96];
 #endif
+
+/* ov004 phase at the START of Ov004_StepSceneFrame, before its phase handler runs.  The CAL line
+ * shows "in=3 ph=4 done=0" on the frame where phase 3 (fade-out) hands over to phase 4: handler 4
+ * (Ov004_MarkTransitionComplete, done=1) only runs on the next frame. */
+void kh_debug_calendar_entry(int phase)
+{
+#if KH_PS2_DEBUG
+    g_calendar_entry_phase = phase;
+#else
+    (void)phase;
+#endif
+}
+
+/* Main-loop step breadcrumb: updates the watchdog mark but not the overlay's DBG stage.  The
+ * overlay is drawn inside KhNitro_PresentFrame, so a loop step such as "present" would otherwise
+ * be printed on every successfully presented frame and hide the last game-side breadcrumb. */
+void kh_debug_loop_mark(const char *stage, int a, int b)
+{
+#if KH_PS2_DEBUG
+    extern volatile const char *kh_watchdog_mark;
+    snprintf(g_loop_mark, sizeof g_loop_mark, "%s a=%d b=%d", stage ? stage : "(null)", a, b);
+    kh_watchdog_mark = g_loop_mark;
+#else
+    (void)stage; (void)a; (void)b;
+#endif
+}
 
 void kh_debug_calendar_state(int phase, int gate, int position, int elapsed,
                              int phase_frame, int complete)
@@ -92,8 +121,8 @@ void kh_debug_stage_overlay(void)
                                 scene[2], scene[3], scene[4], state, flags);
             if (scene[2] == 5) {
                 kh_video_debug_text(8, y - 28, 0xffffff,
-                                    "CAL ph=%d gate=%d pos=%x age=%d",
-                                    g_calendar_phase, g_calendar_gate,
+                                    "CAL in=%d ph=%d gate=%d pos=%x age=%d",
+                                    g_calendar_entry_phase, g_calendar_phase, g_calendar_gate,
                                     g_calendar_position, g_calendar_elapsed);
                 kh_video_debug_text(8, y - 42, 0xffffff,
                                     "CAL pfrm=%d done=%d calls=%u",
@@ -102,5 +131,56 @@ void kh_debug_stage_overlay(void)
             }
         }
     }
+#endif
+}
+
+/*
+ * Main-thread report for "the loop is alive but nothing has been presented for seconds"
+ * (nitro_core.c check_present_stall).  The hang watchdog cannot see that case because VBlank
+ * waits keep happening.  Called between frames from OS_WaitVBlankIntr, so the frame packet is
+ * free; the report is flipped in at the next VBlank like any frame.
+ */
+void kh_debug_present_stall_screen(unsigned idle, unsigned presents, unsigned game_vblank,
+                                   unsigned irq_mask, const void *vblank_fn)
+{
+#if KH_PS2_DEBUG
+    extern volatile const char *kh_watchdog_mark;
+    extern char gSceneCtl[];
+    int *scene = (int *)gSceneCtl;
+    int *obj = (int *)scene[0];
+    unsigned int p = (unsigned int)obj;
+    int state = 0x7fffffff, flags = 0;
+    int y = 24;
+
+    if (p >= 0x00010000u && p < 0x02000000u) {
+        flags = obj[0];
+        state = obj[5];
+    }
+
+    kh_video_begin_frame(0x180000);
+    kh_video_debug_text(16, y, 0xffffff, "KH Days PS2 - loop alive, no frame presented");
+    y += 20;
+    kh_video_debug_text(16, y, 0xffffff, "idle %u VBlanks  presents %u  vblank %u",
+                        idle, presents, (unsigned)kh_vblank_count());
+    y += 14;
+    kh_video_debug_text(16, y, 0xffffff, "game vblank %u  irq mask %x  vblank fn %p",
+                        game_vblank, irq_mask, vblank_fn);
+    y += 14;
+    kh_video_debug_text(16, y, 0xffffff, "loop: %s", g_loop_mark[0] ? g_loop_mark : "-");
+    y += 14;
+    kh_video_debug_text(16, y, 0xffffff, "mark: %s",
+                        kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
+    y += 14;
+    kh_video_debug_text(16, y, 0xffffff, "DBG %s  a=%d b=%d", g_stage, g_stage_a, g_stage_b);
+    y += 14;
+    kh_video_debug_text(16, y, 0xffffff, "SCN cur=%d pend=%d arg=%d state=%d flags=%x",
+                        scene[2], scene[3], scene[4], state, flags);
+    y += 14;
+    kh_video_debug_text(16, y, 0xffffff, "CAL in=%d ph=%d done=%d calls=%u age=%d",
+                        g_calendar_entry_phase, g_calendar_phase, g_calendar_complete,
+                        g_calendar_calls, g_calendar_elapsed);
+    kh_video_submit_frame();
+#else
+    (void)idle; (void)presents; (void)game_vblank; (void)irq_mask; (void)vblank_fn;
 #endif
 }
