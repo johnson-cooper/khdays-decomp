@@ -93,6 +93,11 @@ targets:
       - ps2/overrides/overlays/Ov004_RunDelayedProtectionChecks.c
       - ps2/overrides/overlays/Ov004_StepMissionSelectScene.c
       - ps2/overrides/overlays/Ov004_StepSceneFrame.c
+      - ps2/overrides/overlays/Ov008_CommitSaveToSlot.c
+      - ps2/overrides/overlays/Ov008_GetLatchedTick.c
+      - ps2/overrides/overlays/Ov008_LatchTick.c
+      - ps2/overrides/overlays/Ov009_CommitSaveToSlot.c
+      - ps2/overrides/overlays/Ov009_LatchTick.c
       - ps2/overrides/overlays/Ov012_InitAndDispatchTriple.c
       - ps2/overrides/overlays/Ov012_InitOpeningScene.c
       - ps2/overrides/overlays/Ov012_MobiClip_DrainStream.c
@@ -103,6 +108,7 @@ targets:
       - ps2/overrides/overlays/Ov024_MobiClip_GetDecoderCodeCached.c
       - ps2/overrides/overlays/Ov024_MobiClip_OpenStreams.c
       - ps2/overrides/overlays/Ov024_TickStreamSlots.c
+      - ps2/overrides/overlays/Ov025_CommitSaveToSlot.c
       - ps2/overrides/system/Ov029_AcquireOverlaySlot.c
       - ps2/src/abi/*.c
     include_dirs: [ps2/include, include]
@@ -14843,7 +14849,6 @@ targets:
       - src/overlays/scenes/ov008_camp_menu/Ov008_CommitMissionModeUiSlots.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_CommitPage.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_CommitPendingSubState.c
-      - ps2/gen/src/src/overlays/scenes/ov008_camp_menu/Ov008_CommitSaveToSlot.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_CommitSelectedPage.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_CommitSelection.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_CommitSynchronizedSnapshotState.c
@@ -15078,7 +15083,6 @@ targets:
       - src/overlays/scenes/ov008_camp_menu/Ov008_GetItemDescriptionForMember.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_GetItemParamWord.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_GetItemTableEntry.c
-      - src/overlays/scenes/ov008_camp_menu/Ov008_GetLatchedTick.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_GetLocalMemberKind.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_GetLocalPlayerCharacter.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_GetLocalPlayerIndex.c
@@ -15241,7 +15245,6 @@ targets:
       - src/overlays/scenes/ov008_camp_menu/Ov008_IsSubMenuSceneReady.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_IsValidItemId.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_ItemIdToSlot.c
-      - src/overlays/scenes/ov008_camp_menu/Ov008_LatchTick.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_LayoutAndMeasureA.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_LayoutAndMeasureB.c
       - src/overlays/scenes/ov008_camp_menu/Ov008_LayoutDetailPanel.c
@@ -16124,7 +16127,6 @@ targets:
       - src/overlays/scenes/ov009_camp_save/Ov009_CodeToSlotTile.c
       - src/overlays/scenes/ov009_camp_save/Ov009_CommitPage.c
       - src/overlays/scenes/ov009_camp_save/Ov009_CommitSaveFields.c
-      - ps2/gen/src/src/overlays/scenes/ov009_camp_save/Ov009_CommitSaveToSlot.c
       - src/overlays/scenes/ov009_camp_save/Ov009_ConfigureTagBySign.c
       - src/overlays/scenes/ov009_camp_save/Ov009_Container_Init.c
       - src/overlays/scenes/ov009_camp_save/Ov009_CopyActiveHitToCursor.c
@@ -16201,7 +16203,6 @@ targets:
       - src/overlays/scenes/ov009_camp_save/Ov009_IsEncounterEligible.c
       - src/overlays/scenes/ov009_camp_save/Ov009_IsPointInBox.c
       - src/overlays/scenes/ov009_camp_save/Ov009_IsRangeFullyCleared.c
-      - src/overlays/scenes/ov009_camp_save/Ov009_LatchTick.c
       - src/overlays/scenes/ov009_camp_save/Ov009_LayoutPanelEntry.c
       - src/overlays/scenes/ov009_camp_save/Ov009_ListRemoveAndFree.c
       - src/overlays/scenes/ov009_camp_save/Ov009_LoadAndInitResourceSections.c
@@ -16608,7 +16609,6 @@ targets:
       - src/overlays/screens/ov025_camp_menu_2/Ov025_ClearTrackedGridCells.c
       - src/overlays/screens/ov025_camp_menu_2/Ov025_ClosePopup.c
       - src/overlays/screens/ov025_camp_menu_2/Ov025_CommitPage.c
-      - ps2/gen/src/src/overlays/screens/ov025_camp_menu_2/Ov025_CommitSaveToSlot.c
       - src/overlays/screens/ov025_camp_menu_2/Ov025_CompareByField6ThenField18.c
       - src/overlays/screens/ov025_camp_menu_2/Ov025_ComputeGridChanges.c
       - src/overlays/screens/ov025_camp_menu_2/Ov025_Config_LoadValues.c
