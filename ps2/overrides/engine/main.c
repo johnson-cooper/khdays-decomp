@@ -64,6 +64,7 @@ extern int   Scene_AdvanceToPending(void);
 extern void  kh_debug_mark(const char *stage, int a, int b);
 extern volatile int kh_watchdog_fast_report;
 extern void  KhNitro_PresentFrame(void);   /* ps2/src/nitro: GX flush + swap */
+extern void  KhNitro_DiscardFrame(void);   /* abandon an unsubmitted dead-scene frame */
 
 /* ---- globals ---- */
 extern unsigned char data_027e0060;   /* current scene id (0 = none) */
@@ -98,16 +99,26 @@ static int ps2_calendar_active(void)
  * avoids a second presentation of an already-dead protected calendar object while
  * still preserving the completed frame for one VBlank.
  */
-static void ps2_advance_finished_calendar_after_flip(void)
+static int ps2_calendar_dead_with_pending(void)
 {
     int *scene = (int *)gSceneCtl;
     int *obj = (int *)scene[0];
 
-    if (scene[2] != SCENE_CALENDAR || scene[3] == 0 || obj == 0)
-        return;
-    if (obj[5] != -2 || (obj[0] & 1) == 0)
+    return scene[2] == SCENE_CALENDAR &&
+           scene[3] != 0 &&
+           obj != 0 &&
+           obj[5] == -2 &&
+           (obj[0] & 1) != 0;
+}
+
+static void ps2_advance_finished_calendar_after_flip(void)
+{
+    int *scene;
+
+    if (!ps2_calendar_dead_with_pending())
         return;
 
+    scene = (int *)gSceneCtl;
     kh_debug_mark("calendar main: advance after flip", scene[2], scene[3]);
     Scene_AdvanceToPending();
     scene = (int *)gSceneCtl;
@@ -202,6 +213,30 @@ void kh_game_main(void) {
                 FrameStep_UpdateTaskQueue();
                 kh_prof_end(KH_PROF_GAME);
             }
+        }
+
+        /*
+         * Real-hardware calendar handoff:
+         *
+         * The completion callback can run inside Obj_UpdateAll, leaving exactly
+         * cur=calendar / pend=field / state=-2 in THIS SAME iteration.  Hardware
+         * evidence shows the subsequent KhNitro_PresentFrame never returns.  The
+         * final DAY card was submitted by the previous iteration and is already
+         * visible, so do not ask the GS to render one more dead-calendar frame.
+         *
+         * Discard only CPU-side buffered work first, then tear down ov004 and load
+         * the pending field scene.  The next loop iteration renders the new scene
+         * from a clean command/geometry frame.
+         */
+        if (ps2_calendar_dead_with_pending()) {
+            int *scene = (int *)gSceneCtl;
+            kh_debug_mark("calendar main: discard dead frame", scene[2], scene[3]);
+            KhNitro_DiscardFrame();
+            kh_debug_mark("calendar main: advance before present", scene[2], scene[3]);
+            Scene_AdvanceToPending();
+            scene = (int *)gSceneCtl;
+            kh_debug_mark("calendar main: advance returned", scene[2], scene[3]);
+            continue;
         }
 
         /* present: also in pause mode 1 (the cutscene pause menu), where the 3D scene is frozen -
