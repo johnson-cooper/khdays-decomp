@@ -243,9 +243,24 @@ uint32_t OS_GetVBlankCount(void) { return g_ds_vblank_count; }
 /* ------------------------------------------------------------ present */
 
 extern void GXi_FlushCommandList(void);
+extern void GXi_DiscardCommandList(void);
 extern void kh_ge_end_frame(void);
 extern void kh_tex3d_frame_sent(void);
 extern void kh_tex3d_new_frame(void);
+
+/*
+ * Drop a CPU-built frame without touching VIF/GIF/GS.  Used only for a scene
+ * that became dead during its update: the previously submitted frame is already
+ * on screen, while trying to render/submit one more frame from the dead scene
+ * can hang the real GS/VIF path.
+ */
+void KhNitro_DiscardFrame(void)
+{
+    GXi_DiscardCommandList();
+    kh_tex3d_frame_sent();
+    kh_tex3d_new_frame();
+    kh_ge_end_frame();
+}
 
 void KhNitro_PresentFrame(void)
 {
