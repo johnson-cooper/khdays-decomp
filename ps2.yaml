@@ -64,6 +64,7 @@ targets:
     sources:
       - ps2/overrides/engine/Fx_Tween.c
       - ps2/overrides/engine/Game_RunActionScript.c
+      - ps2/overrides/engine/GetEntryField20ByIndex.c
       - ps2/overrides/engine/InstantiateClass.c
       - ps2/overrides/engine/Obj_Destroy.c
       - ps2/overrides/engine/Obj_UpdateAll.c
@@ -417,7 +418,6 @@ targets:
       - src/engine/Game_UnwindActionStack.c
       - src/engine/Game_UpdateObjectMotion.c
       - src/engine/GetBGScreenBaseForLayer.c
-      - src/engine/GetEntryField20ByIndex.c
       - src/engine/GetField4UnlessState2.c
       - src/engine/GetFrameRateMode.c
       - src/engine/GetGlobalU16At4.c
