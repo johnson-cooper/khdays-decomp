@@ -50,11 +50,7 @@ static void crash_report(void)
 {
     const char *screen_line[11];
     extern volatile const char *kh_watchdog_mark;
-    /* weak: the platform-test ELF links this library without the game */
-    extern char gSceneCtl[] __attribute__((weak));
-    static const int k_no_scene[5];
     const EE_RegFrame *f = &g_snap;
-    const int *scene = gSceneCtl ? (const int *)gSceneCtl : k_no_scene;
     int code, i;
 
     EIntr();                    /* the fault may have hit inside a DIntr() section */
@@ -77,8 +73,9 @@ static void crash_report(void)
              f->t0[0], f->t1[0], f->t2[0], f->t3[0], f->gp[0], f->fp[0]);
     snprintf(g_line[7], sizeof g_line[7], "s6 %08x s7 %08x t8 %08x t9 %08x status %08x",
              f->s6[0], f->s7[0], f->t8[0], f->t9[0], (unsigned)f->status);
-    snprintf(g_line[8], sizeof g_line[8], "SCN cur=%d pend=%d obj=%08x",
-             scene[2], scene[3], (unsigned)scene[0]);
+    /* no game symbols here: the platform-test ELF links this library without the game */
+    snprintf(g_line[8], sizeof g_line[8], "frame lo %08x hi %08x errorepc %08x",
+             (unsigned)f->lo, (unsigned)f->hi, (unsigned)f->errorepc);
     snprintf(g_line[9], sizeof g_line[9], "Map frame EPC and RA with build/khdays-ps2.map");
     g_line[10][0] = 0;
 
