@@ -19,6 +19,18 @@
  * slots retain scattered hot regions and cap a small miss at 16 KiB; requests at least that large
  * bypass the cache and read exactly into their destination.  Streamed music has its own descriptor
  * and keeps two 128 KiB windows because its planar stereo reads alternate between two long runs.
+ *
+ * Seek cursors.  USB/BDM storage goes through bdmfs_fatfs, whose FatFs is built with
+ * FF_USE_FASTSEEK 0 and FF_FS_TINY 1: an lseek to the same or a later cluster walks forward from
+ * the current cluster, but any seek BACKWARDS walks the FAT chain from the first cluster of the
+ * file, one FAT sector read per 128 clusters, through a single shared sector buffer.  Deep into a
+ * multi-hundred-MiB khdays.pak that is ~100 USB sector reads per backward seek; hardware traces
+ * showed raw 16 KiB reads averaging 257 ms (722 seeks in 1087 reads) after loading a save, whose
+ * data lies far into the pack, and two readers (game data and streamed music, which alternates
+ * left/right channel regions) kept seeking each other backwards.  So a read-only file keeps up to
+ * KH_MAX_CURSORS descriptors, each with its own device position: a read uses the descriptor at or
+ * just before the target (a short forward walk, usually none), and another descriptor is opened
+ * only when every existing one is already past the target.
  */
 #define NEWLIB_PORT_AWARE   /* only for fileXioInit/Mount; all file I/O below is POSIX */
 #include "platform/kh_platform.h"
@@ -41,6 +53,16 @@
 #define STREAM_READAHEAD (128 * 1024)
 #define STREAM_READ_WINDOWS 2
 #define MAX_READ_WINDOWS SCENE_READ_WINDOWS
+#define KH_MAX_CURSORS 6
+#define SCENE_CURSORS KH_MAX_CURSORS
+#define STREAM_CURSORS 2         /* left and right channel runs */
+
+typedef struct KhCursor {
+    int fd;                /* -1: not opened yet */
+    uint32_t raw_pos;      /* known device position of this descriptor */
+    int raw_pos_valid;
+    uint32_t age;
+} KhCursor;
 
 typedef struct KhReadWindow {
     uint32_t pos;
@@ -50,7 +72,7 @@ typedef struct KhReadWindow {
 } KhReadWindow;
 
 struct KhFile {
-    int fd;
+    int fd;                /* cursor 0's descriptor (the only one for writable files) */
     int lock_sema;        /* serializes fd position and read-ahead state across EE threads */
     int writable;
     uint32_t size;
@@ -63,6 +85,10 @@ struct KhFile {
     int profile_pack;      /* khdays.pak: include reads in the scene load profile */
     uint8_t *cache;
     KhReadWindow win[MAX_READ_WINDOWS];
+    int ncursors;          /* descriptors this file may use (1 for writable files) */
+    uint32_t cursor_age;
+    KhCursor cur[KH_MAX_CURSORS];
+    char full_path[320];   /* to open further cursors */
 };
 
 static char g_boot_dir[256] = "host:";
@@ -212,7 +238,7 @@ static void file_unlock(KhFile *f)
 }
 
 static KhFile *file_open(const char *path, int write, uint32_t read_ahead,
-                         int read_windows, int profile_pack)
+                         int read_windows, int profile_pack, int cursors)
 {
     char full[320];
     KhFile *f;
@@ -246,6 +272,18 @@ static KhFile *file_open(const char *path, int write, uint32_t read_ahead,
         return NULL;
     }
     f->fd = fd;
+    snprintf(f->full_path, sizeof f->full_path, "%s", full);
+    {
+        int c;
+        for (c = 0; c < KH_MAX_CURSORS; c++)
+            f->cur[c].fd = -1;
+        f->cur[0].fd = fd;
+        if (cursors < 1 || write)
+            cursors = 1;
+        if (cursors > KH_MAX_CURSORS)
+            cursors = KH_MAX_CURSORS;
+        f->ncursors = cursors;
+    }
     f->writable = write;
     f->read_ahead = read_ahead;
     f->read_windows = read_windows;
@@ -256,6 +294,8 @@ static KhFile *file_open(const char *path, int write, uint32_t read_ahead,
         if (io_lseek(fd, 0, SEEK_SET) == 0) {
             f->raw_pos = 0;
             f->raw_pos_valid = 1;
+            f->cur[0].raw_pos = 0;
+            f->cur[0].raw_pos_valid = 1;
         }
         f->size = sz < 0 ? 0 : (uint32_t)sz;
         if (read_windows > MAX_READ_WINDOWS)
@@ -272,7 +312,7 @@ static KhFile *file_open(const char *path, int write, uint32_t read_ahead,
 
 KhFile *kh_file_open(const char *path, int write)
 {
-    return file_open(path, write, SCENE_READAHEAD, SCENE_READ_WINDOWS, 1);
+    return file_open(path, write, SCENE_READAHEAD, SCENE_READ_WINDOWS, 1, SCENE_CURSORS);
 }
 
 KhFile *kh_file_open_stream(const char *path)
@@ -282,7 +322,45 @@ KhFile *kh_file_open_stream(const char *path)
      * regions.  Preserve the original two 128 KiB windows for that access pattern; applying the
      * scene loader's 16 KiB random-read policy here causes constant physical refills and audible
      * starvation on a real console. */
-    return file_open(path, 0, STREAM_READAHEAD, STREAM_READ_WINDOWS, 0);
+    return file_open(path, 0, STREAM_READAHEAD, STREAM_READ_WINDOWS, 0, STREAM_CURSORS);
+}
+
+/* The device's file position is shared by lseek/read, so the pair must live in one I/O
+ * critical region.  Do not implement this in terms of io_lseek()+io_read(): that would
+ * release ownership between the two operations. */
+/* The cursor to read `off` with: the opened descriptor at or nearest before it (FatFs walks
+ * forward from there), else a not-yet-opened slot, else the least recently used descriptor. */
+static KhCursor *pick_cursor(KhFile *f, uint32_t off)
+{
+    KhCursor *best = NULL, *lru = NULL, *spare = NULL;
+    int c;
+    for (c = 0; c < f->ncursors; c++) {
+        KhCursor *k = &f->cur[c];
+        if (k->fd < 0) {
+            if (!spare)
+                spare = k;
+            continue;
+        }
+        if (k->raw_pos_valid && k->raw_pos <= off && (!best || k->raw_pos > best->raw_pos))
+            best = k;
+        if (!lru || k->age < lru->age)
+            lru = k;
+    }
+    if (best)
+        return best;
+    if (spare) {
+        int w = kh_io_begin_tag("VFS cursor open");
+        int fd = open(f->full_path, O_RDONLY, 0666);
+        kh_io_end(w);
+        if (fd >= 0) {
+            spare->fd = fd;
+            spare->raw_pos = 0;           /* a fresh descriptor starts at offset 0 */
+            spare->raw_pos_valid = 1;
+            return spare;
+        }
+        f->ncursors = (int)(spare - f->cur);   /* device refused: stop trying */
+    }
+    return lru;
 }
 
 /* The device's file position is shared by lseek/read, so the pair must live in one I/O
@@ -292,9 +370,14 @@ static int raw_read_at(KhFile *f, uint32_t off, void *dst, uint32_t n,
                        uint32_t req_off, uint32_t req_size, int window)
 {
     uint64_t start = 0;
-    int seek = !f->raw_pos_valid || f->raw_pos != off;
+    KhCursor *k = pick_cursor(f, off);
+    int seek;
     int w;
     int r;
+    if (!k)
+        return -1;
+    k->age = ++f->cursor_age;
+    seek = !k->raw_pos_valid || k->raw_pos != off;
     if (f->profile_pack) {
         kh_loadprof_raw_begin(req_off, req_size, off, n, window);
         if (seek)
@@ -302,16 +385,16 @@ static int raw_read_at(KhFile *f, uint32_t off, void *dst, uint32_t n,
         start = kh_time_us();
     }
     w = kh_io_begin_tag(seek ? "VFS raw seek+read" : "VFS raw sequential read");
-    if (seek && lseek(f->fd, (off_t)off, SEEK_SET) < 0) {
-        f->raw_pos_valid = 0;
+    if (seek && lseek(k->fd, (off_t)off, SEEK_SET) < 0) {
+        k->raw_pos_valid = 0;
         r = -1;
     } else {
-        r = (int)read(f->fd, dst, n);
+        r = (int)read(k->fd, dst, n);
         if (r > 0) {
-            f->raw_pos = off + (uint32_t)r;
-            f->raw_pos_valid = 1;
+            k->raw_pos = off + (uint32_t)r;
+            k->raw_pos_valid = 1;
         } else {
-            f->raw_pos_valid = 0;
+            k->raw_pos_valid = 0;
         }
     }
     kh_io_end(w);
@@ -490,6 +573,12 @@ int kh_file_close(KhFile *f)
         return 0;
     file_lock(f);
     r = io_close(f->fd);
+    {
+        int c;
+        for (c = 1; c < KH_MAX_CURSORS; c++)
+            if (f->cur[c].fd >= 0)
+                io_close(f->cur[c].fd);
+    }
     file_unlock(f);
     DeleteSema(f->lock_sema);
     kh_free(f->cache);

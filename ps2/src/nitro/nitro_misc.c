@@ -45,7 +45,11 @@ void CPi_RestoreContext(const void *ctx) { CP_RestoreContext(ctx); }
 
 /* DispCnt_ApplyPendingMode: re-apply the display mode saved by GX_DispOff (else "normal") */
 extern unsigned short data_020446d0;
-extern short data_020422b4;
+/* NitroSDK gx.c globals the game links against (gen_link.py zero-stubbed them while no C file
+ * defined them): sIsDispOn (TRUE at start) and GXi_DmaId (the SDK default DMA channel 3;
+ * Ov001_BootInit sets 1).  The PS2 MI/GX functions ignore the channel; defined for fidelity. */
+short data_020422b4 = 1;
+int data_020422b8 = 3;
 void DispCnt_ApplyPendingMode(void)
 {
     volatile u32 *dispcnt = (volatile u32 *)kh_ds_io;

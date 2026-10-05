@@ -511,7 +511,9 @@ int __wrap_Ov000_BootRunSelector(void)
 {
     unsigned char *ctx = NNSi_FndGetCurrentRootHeap();
     int requested = ctx && *(int *)(ctx + 0x4c40) != 0;
+    /* to_scene 0: end at whichever scene the start path reaches (the opening, or the field when
+     * a save is loaded); a fixed 11 never closed on the load path and kept profiling forever */
     if (requested)
-        kh_loadprof_begin(KH_LOAD_PROFILE_START_GAME, 1, 11);
+        kh_loadprof_begin(KH_LOAD_PROFILE_START_GAME, 1, 0);
     return __real_Ov000_BootRunSelector();
 }

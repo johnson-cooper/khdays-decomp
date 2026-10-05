@@ -45,7 +45,5 @@ KH_AUTO_STUB(PM_DeletePreSleepCallback)
 KH_AUTO_STUB(PM_PrependPreSleepCallback)
 
 /* undefined data symbols with no C definition: zero storage (contents unknown!) */
-unsigned char data_020422b4[64] __attribute__((aligned(16)));   /* main 0x020422b4 */
-unsigned char data_020422b8[64] __attribute__((aligned(16)));   /* main 0x020422b8 */
 unsigned char func_ov024_02087318_unk[64] __attribute__((aligned(16)));   /* ov024 0x02087318 */
 unsigned char func_ov024_02092e60_unk[64] __attribute__((aligned(16)));   /* ov024 0x02092e60 */
