@@ -387,6 +387,13 @@ uint64_t kh_gs_zbuf_value(int mask_writes) { return GS_SET_ZBUF(g_zbp / 2048, Z_
 float kh_gs_z_max(void) { return 65535.0f; }
 int kh_video_height(void) { return g_h; }
 
+/* Set while the crash report draws.  Once kh_crash_active is set (ps2_crash.c), ordinary frames
+ * are neither submitted nor flipped: the crash handler parks only the faulting thread, so after a
+ * crash on a worker (music stream, audio, loader) the main loop would otherwise keep presenting
+ * and replace the report within a frame. */
+static int g_drawing_crash;
+extern volatile int kh_crash_active;
+
 int ps2_gs_crash_screen(const char *title, const char *const *lines, int count)
 {
     int i;
@@ -411,7 +418,10 @@ int ps2_gs_crash_screen(const char *title, const char *const *lines, int count)
         kh_video_debug_text(16, 40 + i * 16, 0xffffff, "%s", lines[i]);
     kh_video_debug_text(16, 40 + count * 16 + 16, 0xffffff,
                         "Map EPC/RA with build/khdays-ps2.map");
+    g_drawing_crash = 1;
     kh_video_submit_frame();
+    g_drawing_crash = 0;
+    g_flip_pending = 0;     /* the report is displayed directly below; never flip away from it */
 
     /* Show exactly the buffer just drawn; do not depend on the normal flip state machine. */
     graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
@@ -492,6 +502,10 @@ void kh_video_debug_text(int x, int y, uint32_t rgb, const char *fmt, ...)
 void kh_video_submit_frame(void)
 {
     KhGsPacket *p = &g_frame_pkt[g_draw];
+    if (kh_crash_active && !g_drawing_crash) {
+        p->len = 0;          /* keep the crash report on screen: drop this frame */
+        return;
+    }
     kh_gs_packet_ad_begin(p, 1);
     ad(p, GS_REG_FINISH, 1);
 
@@ -507,7 +521,7 @@ void kh_video_submit_frame(void)
 
 void kh_video_flip(void)
 {
-    if (!g_flip_pending)
+    if (!g_flip_pending || kh_crash_active)
         return;
     g_flip_pending = 0;
     graph_set_framebuffer_filtered(g_fbp[g_draw], g_w, FB_PSM, 0, 0);
