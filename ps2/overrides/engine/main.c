@@ -60,6 +60,7 @@ extern void  Obj_UpdateAll(int a);
 extern void  Callbacks_Run(int a);
 extern void  SoundMgr_Update(void);
 extern int   Game_PollSceneAlive(void);
+extern int   Scene_AdvanceToPending(void);
 extern void  kh_debug_mark(const char *stage, int a, int b);
 extern volatile int kh_watchdog_fast_report;
 extern void  KhNitro_PresentFrame(void);   /* ps2/src/nitro: GX flush + swap */
@@ -80,6 +81,37 @@ extern struct SceneState data_020442a0;
 static int ps2_calendar_active(void)
 {
     return ((int *)gSceneCtl)[2] == SCENE_CALENDAR;
+}
+
+/*
+ * A completed calendar scene is a protected object (flag bit 0), so Obj_UpdateAll
+ * intentionally leaves it resident after its state becomes -2.  Normally the root
+ * task advances the pending scene on a later pass.
+ *
+ * On real PS2 hardware the final DAY frame can be submitted and flipped successfully,
+ * then the following frame reaches cur=5 / pend=2 / state=-2 and stalls inside the
+ * next KhNitro_PresentFrame().  At that point there is nothing left to render from
+ * ov004: the final calendar frame is already physically on the TV.
+ *
+ * OS_WaitVBlankIntr() performs kh_video_flip() before it returns, so this is the
+ * earliest safe point to tear down ov004 and enter the field scene.  Doing it here
+ * avoids a second presentation of an already-dead protected calendar object while
+ * still preserving the completed frame for one VBlank.
+ */
+static void ps2_advance_finished_calendar_after_flip(void)
+{
+    int *scene = (int *)gSceneCtl;
+    int *obj = (int *)scene[0];
+
+    if (scene[2] != SCENE_CALENDAR || scene[3] == 0 || obj == 0)
+        return;
+    if (obj[5] != -2 || (obj[0] & 1) == 0)
+        return;
+
+    kh_debug_mark("calendar main: advance after flip", scene[2], scene[3]);
+    Scene_AdvanceToPending();
+    scene = (int *)gSceneCtl;
+    kh_debug_mark("calendar main: advance returned", scene[2], scene[3]);
 }
 
 void kh_game_main(void) {
@@ -126,6 +158,14 @@ void kh_game_main(void) {
     /* --- 4. FRAME LOOP --- */
     for (;;) {
         OS_WaitVBlankIntr();
+
+        /*
+         * The previous frame has just been flipped by the VBlank service.  If that
+         * frame completed ov004 and left the protected calendar scene dead with the
+         * field pending, advance it now instead of trying to present ov004 again.
+         */
+        ps2_advance_finished_calendar_after_flip();
+
         frameTarget = VBlank_GetCount();
         kh_watchdog_fast_report = ps2_calendar_active();
         if (ps2_calendar_active())
