@@ -102,10 +102,31 @@ void MI_CpuCopy8(const void *src, void *dst, u32 size)
     copy_fwd8(src, dst, size);
 }
 
+/*
+ * ARM946E-S alignment semantics.  The SDK's 16/32-bit routines are LDRH/STRH and LDR/STR loops.
+ * On the DS ARM9 a misaligned STRH/LDRH ignores address bit 0 and a misaligned STR ignores bits
+ * 0-1 (the store lands on the aligned address); a misaligned LDR reads the aligned word rotated
+ * right by 8 * (addr & 3).  Game code relies on this: Ov002_InitStateRecord (field constructor)
+ * does MIi_CpuClear16(0xffff, rec + 0x1b, 4), which on the DS fills rec+0x1a..0x1d.  On the EE
+ * the same halfword store raises an address-error exception (the crash right after the DAY 255
+ * calendar handed over to the field).  Reproduce the ARM9 behaviour instead of faulting.
+ */
+#define ARM_ALIGN16(p) ((void *)((uintptr_t)(p) & ~(uintptr_t)1))
+#define ARM_ALIGN32(p) ((void *)((uintptr_t)(p) & ~(uintptr_t)3))
+
+static inline u32 arm_ldr(const void *p)
+{
+    uintptr_t a = (uintptr_t)p;
+    u32 w = *(const u32 *)(a & ~(uintptr_t)3);
+    u32 r = (u32)(a & 3u) * 8u;
+    return r ? (w >> r) | (w << (32u - r)) : w;
+}
+
 static void clear16_raw(u16 data, void *dst, u32 size);
 #define FILL16(d, n) clear16_raw(data, d, n)
 void MIi_CpuClear16(u16 data, void *dst, u32 size)
 {
+    dst = ARM_ALIGN16(dst);
     if (in_vram(dst)) { VRAM_FILL(dst, size, FILL16); return; }
     clear16_raw(data, dst, size);
 }
@@ -121,6 +142,8 @@ static void clear16_raw(u16 data, void *dst, u32 size)
 static void copy16_raw(const void *src, void *dst, u32 size);
 void MIi_CpuCopy16(const void *src, void *dst, u32 size)
 {
+    src = ARM_ALIGN16(src);
+    dst = ARM_ALIGN16(dst);
     if (in_vram(dst)) { VRAM_COPY(src, dst, size, copy16_raw); return; }
     copy16_raw(src, dst, size);
 }
@@ -142,6 +165,7 @@ static void clear32_raw(u32 data, void *dst, u32 size);
 #define FILL32(d, n) clear32_raw(data, d, n)
 void MIi_CpuClear32(u32 data, void *dst, u32 size)
 {
+    dst = ARM_ALIGN32(dst);
     if (in_vram(dst)) { VRAM_FILL(dst, size, FILL32); return; }
     clear32_raw(data, dst, size);
 }
@@ -155,8 +179,26 @@ static void clear32_raw(u32 data, void *dst, u32 size)
 }
 
 static void copy32_raw(const void *src, void *dst, u32 size);
+static void copy32_rotated(const void *src, void *dst, u32 size)
+{
+    const u8 *s = src;
+    u32 *d = dst;
+    u32 n = size / 4;
+    while (n--) {
+        *d++ = arm_ldr(s);
+        s += 4;
+    }
+}
+
 void MIi_CpuCopy32(const void *src, void *dst, u32 size)
 {
+    dst = ARM_ALIGN32(dst);
+    if ((uintptr_t)src & 3u) {
+        /* misaligned source: each LDR returns the rotated aligned word, as on the ARM9 */
+        if (in_vram(dst)) { VRAM_COPY(src, dst, size, copy32_rotated); return; }
+        copy32_rotated(src, dst, size);
+        return;
+    }
     if (in_vram(dst)) { VRAM_COPY(src, dst, size, copy32_raw); return; }
     copy32_raw(src, dst, size);
 }

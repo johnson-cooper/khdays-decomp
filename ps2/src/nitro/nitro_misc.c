@@ -11,7 +11,8 @@
 /* MI_CpuFill32 (the ITCM copy of MIi_CpuClear32): (value, dst, size) */
 void INITi_CpuClear32_0x01ff86fc(u32 value, void *dst, u32 size)
 {
-    u32 *d = dst;
+    /* STR ignores address bits 0-1 on the ARM9 (see nitro_mi.c ARM946E-S alignment note) */
+    u32 *d = (u32 *)((uintptr_t)dst & ~(uintptr_t)3);
     size /= 4;
     while (size--)
         *d++ = value;
