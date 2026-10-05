@@ -96,22 +96,28 @@ void __wrap_NNS_FndFreeToExpHeap(void *heap, void *mem)
 {
     const ExpHeap *h = heap;
     const MBlock *want = (const MBlock *)((const u8 *)mem - sizeof(MBlock));
-    const MBlock *b;
-    int guard;
 
-    if (mem && h && h->signature == 0x45585048u) {
-        for (b = h->used_head, guard = 0; b && guard < 100000; b = b->next, guard++)
-            if (b == want) {
-                __real_NNS_FndFreeToExpHeap(heap, mem);
-                g_prev = g_last; g_last.op = "free"; g_last.heap = heap; g_last.ptr = mem; g_last.size = want->size;
-                g_last.caller = __builtin_return_address(0);
+    /* Membership in O(1): a used block carries the 'UD' signature, lies inside the heap, and its
+     * neighbours point back at it (or the heap's head/tail does).  This was a walk of the whole
+     * used list per free - O(live blocks) - which grew with every enemy and effect on screen. */
+    if (mem && h && h->signature == 0x45585048u &&
+        (const u8 *)want >= h->start && (const u8 *)mem <= h->end &&
+        !((uintptr_t)want & 3u) && want->signature == 0x5544u /* 'UD' */ &&
+        (want->prev ? ((const u8 *)want->prev >= h->start && (const u8 *)want->prev < h->end &&
+                       want->prev->next == want)
+                    : h->used_head == want) &&
+        (want->next ? ((const u8 *)want->next >= h->start && (const u8 *)want->next < h->end &&
+                       want->next->prev == want)
+                    : h->used_tail == want)) {
+        __real_NNS_FndFreeToExpHeap(heap, mem);
+        g_prev = g_last; g_last.op = "free"; g_last.heap = heap; g_last.ptr = mem; g_last.size = want->size;
+        g_last.caller = __builtin_return_address(0);
 #if defined(KH_PS2_HEAP_CHECK) && KH_PS2_HEAP_CHECK
-                kh_prof_begin(KH_PROF_DEBUG);
-                kh_nns_heap_check("after a free");
-                kh_prof_end(KH_PROF_DEBUG);
+        kh_prof_begin(KH_PROF_DEBUG);
+        kh_nns_heap_check("after a free");
+        kh_prof_end(KH_PROF_DEBUG);
 #endif
-                return;
-            }
+        return;
     }
     KH_ERR("heap", "free of %p (header %04x size %u) that heap %p does not hold, from %p: ignored",
            mem, mem ? (unsigned)want->signature : 0u, mem ? (unsigned)want->size : 0u, heap,

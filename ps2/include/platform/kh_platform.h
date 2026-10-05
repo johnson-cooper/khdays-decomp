@@ -184,6 +184,9 @@ typedef struct KhProfStats {
     float    fps;
     uint32_t zone_us[KH_PROF_COUNT];  /* last frame */
     uint32_t count[KH_PC_COUNT];      /* last frame */
+    uint32_t avg_zone_us[KH_PROF_COUNT];  /* per-frame average over the last report period */
+    uint32_t avg_count[KH_PC_COUNT];
+    uint32_t avg_frame_us, max_frame_us;
 } KhProfStats;
 
 void kh_prof_frame(void);                     /* closes a frame */

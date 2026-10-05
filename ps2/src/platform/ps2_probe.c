@@ -11,7 +11,7 @@
 #include <kernel.h>
 
 #if KH_PS2_DEBUG
-static char g_stage[160];
+static const char *g_stage_ptr;   /* stages are string literals */
 static int g_stage_a;
 static int g_stage_b;
 static int g_calendar_phase;
@@ -126,10 +126,12 @@ void kh_debug_mark(const char *stage, int a, int b)
     extern volatile const char *kh_watchdog_mark;
     static char mark[160];
 
-    snprintf(g_stage, sizeof g_stage, "%s", stage ? stage : "(null)");
+    /* one format per mark (object creation alone passes through ~10 of these): the overlay's
+     * stage is the prefix of `mark` up to " a=", so keep a separate copy only of the pointer */
+    g_stage_ptr = stage ? stage : "(null)";
     g_stage_a = a;
     g_stage_b = b;
-    snprintf(mark, sizeof mark, "%s a=%d b=%d", g_stage, a, b);
+    snprintf(mark, sizeof mark, "%s a=%d b=%d", g_stage_ptr, a, b);
     kh_watchdog_mark = mark;
     live_mark(mark);
 #else
@@ -149,10 +151,10 @@ void kh_debug_stage(const char *stage, int a, int b)
 void kh_debug_stage_overlay(void)
 {
 #if KH_PS2_DEBUG
-    if (g_stage[0] != 0) {
+    if (g_stage_ptr) {
         int y = kh_video_height() - 20;
         kh_video_debug_text(8, y, 0xffffff, "DBG %s  a=%d b=%d",
-                            g_stage, g_stage_a, g_stage_b);
+                            g_stage_ptr ? g_stage_ptr : "-", g_stage_a, g_stage_b);
         {
             /* Keep the scene handoff state visible even when the last breadcrumb came from an
              * object callback.  gSceneCtl is five words: obj, entry, curId, pendId, pendArg. */
@@ -191,6 +193,25 @@ void kh_debug_stage_overlay(void)
                     char sl[100];
                     kh_vfs_stream_stats(sl, (int)sizeof sl);
                     kh_video_debug_text(8, y - 84, 0xffffff, "%s", sl);
+                }
+                {
+                    /* where the frame goes (ms, averaged over the profiler's 120-frame period):
+                     * game logic, geometry front end, 3D packet, texture misses, 2D, GS wait,
+                     * sound, debug checks; then triangles and texture misses per frame */
+#define ZM(z) (unsigned)(ps->avg_zone_us[z] / 1000u), (unsigned)((ps->avg_zone_us[z] / 100u) % 10u)
+                    kh_video_debug_text(8, y - 98, 0xffffff,
+                                        "ZONE %u.%u max %u.%u game %u.%u ge %u.%u r3d %u.%u tex %u.%u "
+                                        "r2d %u.%u gsw %u.%u snd %u.%u dbg %u.%u tri %u tmiss %u",
+                                        (unsigned)(ps->avg_frame_us / 1000u),
+                                        (unsigned)((ps->avg_frame_us / 100u) % 10u),
+                                        (unsigned)(ps->max_frame_us / 1000u),
+                                        (unsigned)((ps->max_frame_us / 100u) % 10u),
+                                        ZM(KH_PROF_GAME), ZM(KH_PROF_GE), ZM(KH_PROF_R3D),
+                                        ZM(KH_PROF_TEX), ZM(KH_PROF_R2D), ZM(KH_PROF_GS_WAIT),
+                                        ZM(KH_PROF_SOUND), ZM(KH_PROF_DEBUG),
+                                        (unsigned)ps->avg_count[KH_PC_TRIS],
+                                        (unsigned)ps->avg_count[KH_PC_TEXMISS]);
+#undef ZM
                 }
             }
             if (scene[2] == 5) {
@@ -245,7 +266,7 @@ void kh_debug_present_stall_screen(unsigned idle, unsigned presents, unsigned ga
     kh_video_debug_text(16, y, 0xffffff, "mark: %s",
                         kh_watchdog_mark ? (const char *)kh_watchdog_mark : "-");
     y += 14;
-    kh_video_debug_text(16, y, 0xffffff, "DBG %s  a=%d b=%d", g_stage, g_stage_a, g_stage_b);
+    kh_video_debug_text(16, y, 0xffffff, "DBG %s  a=%d b=%d", g_stage_ptr ? g_stage_ptr : "-", g_stage_a, g_stage_b);
     y += 14;
     kh_video_debug_text(16, y, 0xffffff, "SCN cur=%d pend=%d arg=%d state=%d flags=%x",
                         scene[2], scene[3], scene[4], state, flags);

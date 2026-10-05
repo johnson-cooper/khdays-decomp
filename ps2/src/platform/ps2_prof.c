@@ -86,32 +86,43 @@ void kh_prof_tex_upload(uint32_t bytes)
 }
 
 #if KH_PS2_PROFILE
+/* "12.3" from microseconds, integer only (double printf is software floating point on the EE and
+ * made this report a visible hitch every period) */
+#define MS10(us) (unsigned)((us) / 1000u), (unsigned)(((us) / 100u) % 10u)
+
+/* Period averages into g_out (shown on the debug overlay), then one "[perf]" log line. */
 static void report(void)
 {
     extern volatile uint32_t kh_audio_underruns, kh_audio_queue_depth;
-    double n = (double)g_nframes, us = 1e6 / CPU_HZ;
     uint64_t frame = 0;
     int i;
-#define ZMS(z) ((double)g_sum_zone[z] * us / 1000.0 / n)
-#define CNT(c) ((unsigned)(g_sum_cnt[c] / (uint64_t)g_nframes))
-    for (i = 0; i < KH_PROF_ASYNC_FIRST; i++)
-        frame += g_sum_zone[i];
+    for (i = 0; i < KH_PROF_COUNT; i++) {
+        g_out.avg_zone_us[i] = (uint32_t)(g_sum_zone[i] * 1000000u / CPU_HZ / (uint64_t)g_nframes);
+        if (i < KH_PROF_ASYNC_FIRST)
+            frame += g_sum_zone[i];
+    }
+    for (i = 0; i < KH_PC_COUNT; i++)
+        g_out.avg_count[i] = (uint32_t)(g_sum_cnt[i] / (uint64_t)g_nframes);
+    g_out.avg_frame_us = (uint32_t)(frame * 1000000u / CPU_HZ / (uint64_t)g_nframes);
+    g_out.max_frame_us = (uint32_t)((uint64_t)g_max_frame * 1000000u / CPU_HZ);
+#define Z(z) MS10(g_out.avg_zone_us[z])
+#define CNT(c) (unsigned)g_out.avg_count[c]
     kh_log(KH_LOG_INFO, "perf",
-           "%.1fms (max %.1f) %.1ffps | game %.1f ge %.1f r3d %.1f tex %.1f r2d %.1f gsw %.1f vbl %.1f "
-           "vbt %.1f snd %.1f dbg %.1f misc %.1f | load %.1f audcpu %.1f",
-           (double)frame * us / 1000.0 / n, (double)g_max_frame * us / 1000.0, g_out.fps,
-           ZMS(KH_PROF_GAME), ZMS(KH_PROF_GE), ZMS(KH_PROF_R3D), ZMS(KH_PROF_TEX), ZMS(KH_PROF_R2D),
-           ZMS(KH_PROF_GS_WAIT), ZMS(KH_PROF_VBLANK), ZMS(KH_PROF_VBTASK), ZMS(KH_PROF_SOUND),
-           ZMS(KH_PROF_DEBUG), ZMS(KH_PROF_FRAME), ZMS(KH_PROF_LOAD), ZMS(KH_PROF_AUDIO));
-    kh_log(KH_LOG_INFO, "perf", "audio cpu %.1fms queue %u underruns %u",
-           ZMS(KH_PROF_AUDIO), (unsigned)kh_audio_queue_depth, (unsigned)kh_audio_underruns);
+           "%u.%ums (max %u.%u) | game %u.%u ge %u.%u r3d %u.%u tex %u.%u r2d %u.%u gsw %u.%u vbl %u.%u "
+           "vbt %u.%u snd %u.%u dbg %u.%u misc %u.%u | load %u.%u audcpu %u.%u",
+           MS10(g_out.avg_frame_us), MS10(g_out.max_frame_us),
+           Z(KH_PROF_GAME), Z(KH_PROF_GE), Z(KH_PROF_R3D), Z(KH_PROF_TEX), Z(KH_PROF_R2D),
+           Z(KH_PROF_GS_WAIT), Z(KH_PROF_VBLANK), Z(KH_PROF_VBTASK), Z(KH_PROF_SOUND),
+           Z(KH_PROF_DEBUG), Z(KH_PROF_FRAME), Z(KH_PROF_LOAD), Z(KH_PROF_AUDIO));
+    kh_log(KH_LOG_INFO, "perf", "audio cpu %u.%ums queue %u underruns %u",
+           Z(KH_PROF_AUDIO), (unsigned)kh_audio_queue_depth, (unsigned)kh_audio_underruns);
     kh_log(KH_LOG_INFO, "perf",
            "vtx %u poly %u cull %u clip %u off %u tri %u draw %u texbind %u miss %u stale %u | upload %u (%u KB) "
            "clut %u gif %u KB spr %u shadow %u",
            CNT(KH_PC_VERTS), CNT(KH_PC_POLYS), CNT(KH_PC_CULLED), CNT(KH_PC_CLIPPED), CNT(KH_PC_OFFSCREEN),
            CNT(KH_PC_TRIS), CNT(KH_PC_DRAWS), CNT(KH_PC_TEXBIND), CNT(KH_PC_TEXMISS), CNT(KH_PC_TEXSTALE), CNT(KH_PC_UPLOADS),
            CNT(KH_PC_UPLOAD_BYTES) / 1024, CNT(KH_PC_CLUTS), CNT(KH_PC_GIF_BYTES) / 1024, CNT(KH_PC_SPRITES), CNT(KH_PC_SHADOW));
-#undef ZMS
+#undef Z
 #undef CNT
 }
 #endif
