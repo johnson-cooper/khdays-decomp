@@ -60,7 +60,6 @@ extern void  Obj_UpdateAll(int a);
 extern void  Callbacks_Run(int a);
 extern void  SoundMgr_Update(void);
 extern int   Game_PollSceneAlive(void);
-extern int   Scene_AdvanceToPending(void);
 extern void  kh_debug_mark(const char *stage, int a, int b);
 extern volatile int kh_watchdog_fast_report;
 extern void  KhNitro_PresentFrame(void);   /* ps2/src/nitro: GX flush + swap */
@@ -76,6 +75,9 @@ extern unsigned char gObjSystem;      /* frame-rate/skip mode byte */
 extern char          gSceneCtl[];     /* obj, entry, curId, pendId, pendArg */
 extern void         *gBootTaskClass;
 
+/* Valid only while SCENE_CALENDAR/ov004 is resident. */
+extern void         *data_ov004_02051384;
+
 struct SceneState { unsigned char phase; unsigned char _p[3]; int handle; };
 extern struct SceneState data_020442a0;
 
@@ -85,44 +87,30 @@ static int ps2_calendar_active(void)
 }
 
 /*
- * A completed calendar scene is a protected object (flag bit 0), so Obj_UpdateAll
- * intentionally leaves it resident after its state becomes -2.  Normally the root
- * task advances the pending scene on a later pass.
+ * ov004 is unusual: its large child object marks transitionComplete at +0x5550,
+ * but the protected parent object does not observe that result until its NEXT
+ * Obj_UpdateAll pass.  On DS that means one more ordinary frame is presented.
  *
- * On real PS2 hardware the final DAY frame can be submitted and flipped successfully,
- * then the following frame reaches cur=5 / pend=2 / state=-2 and stalls inside the
- * next KhNitro_PresentFrame().  At that point there is nothing left to render from
- * ov004: the final calendar frame is already physically on the TV.
- *
- * OS_WaitVBlankIntr() performs kh_video_flip() before it returns, so this is the
- * earliest safe point to tear down ov004 and enter the field scene.  Doing it here
- * avoids a second presentation of an already-dead protected calendar object while
- * still preserving the completed frame for one VBlank.
+ * Real PS2 hardware wedges while presenting precisely that in-between frame.
+ * Keep BootTask as the sole scene dispatcher and preserve the original frame
+ * separation: the next VBlank still drains queued VRAM transfers, the parent
+ * then requests SCENE_FIELD, and a following BootTask pass performs teardown.
+ * We suppress only the GS submission while the completed child waits for those
+ * authentic update passes.
  */
-static int ps2_calendar_dead_with_pending(void)
+static int ps2_calendar_child_complete(void)
 {
     int *scene = (int *)gSceneCtl;
-    int *obj = (int *)scene[0];
+    unsigned char *ctx;
 
-    return scene[2] == SCENE_CALENDAR &&
-           scene[3] != 0 &&
-           obj != 0 &&
-           obj[5] == -2 &&
-           (obj[0] & 1) != 0;
-}
+    if (scene[2] != SCENE_CALENDAR)
+        return 0;
 
-static void ps2_advance_finished_calendar_after_flip(void)
-{
-    int *scene;
+    ctx = (unsigned char *)data_ov004_02051384;
+    if (ctx == 0)
+        return 0;
 
-    if (!ps2_calendar_dead_with_pending())
-        return;
-
-    scene = (int *)gSceneCtl;
-    kh_debug_mark("calendar main: advance after flip", scene[2], scene[3]);
-    Scene_AdvanceToPending();
-    scene = (int *)gSceneCtl;
-    kh_debug_mark("calendar main: advance returned", scene[2], scene[3]);
+    return *(int *)(ctx + 0x5550) != 0;
 }
 
 void kh_game_main(void) {
@@ -170,13 +158,6 @@ void kh_game_main(void) {
     for (;;) {
         OS_WaitVBlankIntr();
 
-        /*
-         * The previous frame has just been flipped by the VBlank service.  If that
-         * frame completed ov004 and left the protected calendar scene dead with the
-         * field pending, advance it now instead of trying to present ov004 again.
-         */
-        ps2_advance_finished_calendar_after_flip();
-
         frameTarget = VBlank_GetCount();
         kh_watchdog_fast_report = ps2_calendar_active();
         if (ps2_calendar_active())
@@ -216,26 +197,27 @@ void kh_game_main(void) {
         }
 
         /*
-         * Real-hardware calendar handoff:
+         * ov004 completion pump.
          *
-         * The completion callback can run inside Obj_UpdateAll, leaving exactly
-         * cur=calendar / pend=field / state=-2 in THIS SAME iteration.  Hardware
-         * evidence shows the subsequent KhNitro_PresentFrame never returns.  The
-         * final DAY card was submitted by the previous iteration and is already
-         * visible, so do not ask the GS to render one more dead-calendar frame.
+         * The child can set done=1 late in Obj_UpdateAll, after the parent already
+         * ran this frame.  The parent therefore needs another update pass to request
+         * scene 2, and BootTask needs the following pass to perform the protected
+         * teardown/load.  Hardware hangs if we submit the completed calendar frame
+         * in between those passes, so abandon only this CPU-built frame and move on
+         * to the next VBlank/update cycle.
          *
-         * Discard only CPU-side buffered work first, then tear down ov004 and load
-         * the pending field scene.  The next loop iteration renders the new scene
-         * from a clean command/geometry frame.
+         * KhNitro_DiscardFrame does not free ov004 or recreate its heap, and it does
+         * not consume the VRAM-transfer queue.  FrameStep_UpdateTaskQueue drains that
+         * queue on the next authentic frame before any teardown can occur.
          */
-        if (ps2_calendar_dead_with_pending()) {
+        if (ps2_calendar_child_complete()) {
             int *scene = (int *)gSceneCtl;
-            kh_debug_mark("calendar main: discard dead frame", scene[2], scene[3]);
+            int *obj = (int *)scene[0];
+            int state = obj ? obj[5] : 0;
+
+            kh_debug_mark("calendar main: suppress final present",
+                          scene[3], state);
             KhNitro_DiscardFrame();
-            kh_debug_mark("calendar main: advance before present", scene[2], scene[3]);
-            Scene_AdvanceToPending();
-            scene = (int *)gSceneCtl;
-            kh_debug_mark("calendar main: advance returned", scene[2], scene[3]);
             continue;
         }
 
