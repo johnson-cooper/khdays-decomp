@@ -57,6 +57,8 @@ PCSX2 on an ELF and prints the port's log lines from `emulog.txt`.
 **Controls (DualShock 2):** Cross = A (attack/confirm), Circle = B (jump/cancel), Triangle = X,
 Square = Y, L1/L2 = L, R1/R2 = R, Start, Select, D-pad or left stick = directions.
 L3 cycles the screen layout while the single-screen presentation is being built.
+Hold R3 and press L3 to toggle a readout of the DS 2D display registers (layer enables, BG
+controls, blending, windows, capture, VRAM banks) over the picture, for reporting rendering bugs.
 
 ## 1. What the repository is
 
