@@ -79,6 +79,23 @@ static void draw_regs_overlay(int top_eng, int H)
     regs_line(x, y, "B DISP %08x  BG %04x %04x %04x %04x  BLD %04x ALPHA %04x Y %02x",
               R32(0x1000), R16(0x1008), R16(0x100a), R16(0x100c), R16(0x100e), R16(0x1050),
               R16(0x1052), R16(0x1054) & 0x1f);
+    {
+        /* the last writes into engine A's BG memory 0-0x7fff, newest first: age in VBlanks,
+         * kind+tag, BG offset+size, data non-zero (1) / zero (0) / unknown (?) */
+        u32 k, cnt = kh_vram_log_count < KH_VRAM_LOG_N ? kh_vram_log_count : KH_VRAM_LOG_N;
+        for (k = 0; k < cnt; k++) {
+            const KhVramLogEnt *v = &kh_vram_log_ring[(kh_vram_log_count - 1 - k) % KH_VRAM_LOG_N];
+            if (!(k & 3)) {
+                y += 10;
+                n = snprintf(line, sizeof line, "BGmem");
+            }
+            n += snprintf(line + n, sizeof line - (size_t)n, "  %u:%c%c %04x+%x %c",
+                          (unsigned)(kh_vblank_count() - v->vb), v->kind, v->tag, (unsigned)v->ofs,
+                          (unsigned)v->size, v->nz < 0 ? '?' : '0' + v->nz);
+            if ((k & 3) == 3 || k + 1 == cnt)
+                regs_line(x, y, "%s", line);
+        }
+    }
     for (e = 0; e < 2; e++) {
         y += 10;
         n = snprintf(line, sizeof line, "%c draw", e ? 'B' : 'A');

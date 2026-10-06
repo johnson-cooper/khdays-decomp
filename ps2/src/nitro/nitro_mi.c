@@ -58,6 +58,9 @@ static u32 vram_piece(const u8 *d, u32 size, int *writable)
             if (ok_) {                                                               \
                 FILL(d_, n_);                                                        \
                 kh_vram_mark((u32)(d_ - kh_ds_vram), n_);                            \
+                kh_vram_log('F', '-', (u32)(d_ - kh_ds_vram), n_, d_[0] != 0);       \
+            } else {                                                                 \
+                kh_vram_log('D', 'f', (u32)(d_ - kh_ds_vram), n_, -1);               \
             }                                                                        \
             d_ += n_;                                                                \
             left_ -= n_;                                                             \
@@ -75,6 +78,9 @@ static u32 vram_piece(const u8 *d, u32 size, int *writable)
             if (ok_) {                                                               \
                 COPY(s_, d_, n_);                                                    \
                 kh_vram_mark((u32)(d_ - kh_ds_vram), n_);                            \
+                kh_vram_log_src('M', '-', (u32)(d_ - kh_ds_vram), n_, d_);           \
+            } else {                                                                 \
+                kh_vram_log('D', 'm', (u32)(d_ - kh_ds_vram), n_, -1);               \
             }                                                                        \
             s_ += n_;                                                                \
             d_ += n_;                                                                \

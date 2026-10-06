@@ -229,7 +229,7 @@ static int load_src_ok(const void *src, u32 ofs, u32 size, int view)
     return 0;
 }
 
-static void view_copy(int view, const void *src, u32 ofs, u32 size)
+static void view_copy_tag(int view, const void *src, u32 ofs, u32 size, char tag)
 {
     const u8 *s = src;
     if (!load_src_ok(src, ofs, size, view))
@@ -240,6 +240,8 @@ static void view_copy(int view, const void *src, u32 ofs, u32 size)
         int b;
         if (v == 0xffffffffu) {
             KH_WARN("gx", "load to unmapped VRAM (view %d, offset 0x%x)", view, (unsigned)ofs);
+            if (view == VIEW_BG)
+                kh_vram_log('U', tag, ofs, size, -1);   /* BG offset, not a VRAM one */
             return;
         }
         /* bytes left in this bank */
@@ -250,6 +252,7 @@ static void view_copy(int view, const void *src, u32 ofs, u32 size)
             n = size;
         memcpy(kh_ds_vram + v, s, n);
         kh_vram_mark(v, n);
+        kh_vram_log_src('L', tag, v, n, s);
         s += n;
         ofs += n;
         size -= n;
@@ -300,9 +303,56 @@ static void *bg_ptr(int view, u32 ofs)
     return g_vram_sink + (ofs & (VRAM_SINK_BYTES / 2 - 1));
 }
 
+/* VRAM write log for the register readout (nitro_render.c): the last writes that touched the
+ * first 32 KiB of engine A's BG memory (where the dialog box characters live), so a screenshot
+ * shows whether those characters were never written, written blank, or written and then wiped.
+ * kind: L GX_Load*, F MI fill, M MI copy, D MI write dropped (bank not CPU-visible),
+ * U GX_Load* into unmapped BG memory; tag: '0'..'3' BGn char load, '4'..'7' BG(n-4) screen load,
+ * '-' other; nz: 1 data had a non-zero byte, 0 all zero, -1 unknown. */
+KhVramLogEnt kh_vram_log_ring[KH_VRAM_LOG_N];
+uint32_t kh_vram_log_count;
+int kh_vram_log_on = 1;            /* cheap: filtered to 32 KiB of BG memory */
+
+void kh_vram_log(char kind, char tag, uint32_t vofs, uint32_t size, int nz)
+{
+    KhVramLogEnt *e;
+    u32 b0, ofs = vofs;
+    if (!kh_vram_log_on)
+        return;
+    if (kind != 'U') {                      /* vofs is a kh_ds_vram offset: make it a BG one */
+        b0 = kh_nitro_view_to_vram(VIEW_BG, 0);
+        if (b0 == 0xffffffffu || vofs + size <= b0 || vofs >= b0 + 0x8000)
+            return;
+        ofs = vofs - b0;
+    } else if (ofs >= 0x8000) {
+        return;
+    }
+    e = &kh_vram_log_ring[kh_vram_log_count++ % KH_VRAM_LOG_N];
+    e->vb = kh_vblank_count();
+    e->ofs = ofs;
+    e->size = size;
+    e->kind = kind;
+    e->tag = tag;
+    e->nz = (signed char)nz;
+}
+
+void kh_vram_log_src(char kind, char tag, uint32_t vofs, uint32_t size, const void *src)
+{
+    const u8 *p = src;
+    u32 i;
+    int nz = 0;
+    if (!kh_vram_log_on)
+        return;
+    for (i = 0; i < size && !nz; i++)
+        nz = p[i] != 0;
+    kh_vram_log(kind, tag, vofs, size, nz);
+}
+
+static void view_copy(int view, const void *src, u32 ofs, u32 size) { view_copy_tag(view, src, ofs, size, '-'); }
+
 #define BGLOADS(N)                                                                                         \
-    void GX_LoadBG##N##Char(const void *s, u32 o, u32 n)  { view_copy(VIEW_BG, s, bg_char_base(0, N) + o, n); }     \
-    void GX_LoadBG##N##Scr(const void *s, u32 o, u32 n)   { view_copy(VIEW_BG, s, bg_scr_base(0, N) + o, n); }      \
+    void GX_LoadBG##N##Char(const void *s, u32 o, u32 n)  { view_copy_tag(VIEW_BG, s, bg_char_base(0, N) + o, n, (char)('0' + N)); }     \
+    void GX_LoadBG##N##Scr(const void *s, u32 o, u32 n)   { view_copy_tag(VIEW_BG, s, bg_scr_base(0, N) + o, n, (char)('4' + N)); }      \
     void GXS_LoadBG##N##Char(const void *s, u32 o, u32 n) { view_copy(VIEW_SUB_BG, s, bg_char_base(1, N) + o, n); } \
     void GXS_LoadBG##N##Scr(const void *s, u32 o, u32 n)  { view_copy(VIEW_SUB_BG, s, bg_scr_base(1, N) + o, n); }  \
     void *G2_GetBG##N##CharPtr(void)  { return bg_ptr(VIEW_BG, bg_char_base(0, N)); }                    \
