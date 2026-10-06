@@ -308,7 +308,8 @@ static void *bg_ptr(int view, u32 ofs)
  * shows whether those characters were never written, written blank, or written and then wiped.
  * kind: L GX_Load*, F MI fill, M MI copy, D MI write dropped (bank not CPU-visible),
  * U GX_Load* into unmapped BG memory; tag: '0'..'3' BGn char load, '4'..'7' BG(n-4) screen load,
- * '-' other; nz: 1 data had a non-zero byte, 0 all zero, -1 unknown. */
+ * '-' other; nz: 1 data had a non-zero byte, 0 all zero, -1 unknown; repeat: how many identical
+ * consecutive writes the entry stands for. */
 KhVramLogEnt kh_vram_log_ring[KH_VRAM_LOG_N];
 uint32_t kh_vram_log_count;
 int kh_vram_log_on = 1;            /* cheap: filtered to 32 KiB of BG memory */
@@ -327,7 +328,18 @@ void kh_vram_log(char kind, char tag, uint32_t vofs, uint32_t size, int nz)
     } else if (ofs >= 0x8000) {
         return;
     }
+    if (kh_vram_log_count) {
+        /* a write identical to the newest one (the dialogue text canvas is re-sent every few
+         * frames) only refreshes it, so it cannot push the older writes out of the ring */
+        e = &kh_vram_log_ring[(kh_vram_log_count - 1) % KH_VRAM_LOG_N];
+        if (e->kind == kind && e->tag == tag && e->ofs == ofs && e->size == size && e->nz == nz) {
+            e->vb = kh_vblank_count();
+            e->repeat++;
+            return;
+        }
+    }
     e = &kh_vram_log_ring[kh_vram_log_count++ % KH_VRAM_LOG_N];
+    e->repeat = 1;
     e->vb = kh_vblank_count();
     e->ofs = ofs;
     e->size = size;

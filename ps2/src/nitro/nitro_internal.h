@@ -44,8 +44,8 @@ static inline void kh_vram_mark(uint32_t vofs, uint32_t size)
 void kh_gfx_pltt_dirty(uint32_t ofs, uint32_t size);
 
 /* VRAM write log for the 2D register readout (nitro_gx.c) */
-typedef struct KhVramLogEnt { uint32_t vb, ofs, size; char kind, tag; signed char nz, pad; } KhVramLogEnt;
-#define KH_VRAM_LOG_N 8
+typedef struct KhVramLogEnt { uint32_t vb, ofs, size, repeat; char kind, tag; signed char nz, pad; } KhVramLogEnt;
+#define KH_VRAM_LOG_N 12
 extern KhVramLogEnt kh_vram_log_ring[KH_VRAM_LOG_N];
 extern uint32_t kh_vram_log_count;
 extern int kh_vram_log_on;

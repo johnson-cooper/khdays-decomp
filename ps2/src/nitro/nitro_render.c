@@ -85,14 +85,16 @@ static void draw_regs_overlay(int top_eng, int H)
         u32 k, cnt = kh_vram_log_count < KH_VRAM_LOG_N ? kh_vram_log_count : KH_VRAM_LOG_N;
         for (k = 0; k < cnt; k++) {
             const KhVramLogEnt *v = &kh_vram_log_ring[(kh_vram_log_count - 1 - k) % KH_VRAM_LOG_N];
-            if (!(k & 3)) {
+            if (!(k % 3)) {
                 y += 10;
                 n = snprintf(line, sizeof line, "BGmem");
             }
             n += snprintf(line + n, sizeof line - (size_t)n, "  %u:%c%c %04x+%x %c",
                           (unsigned)(kh_vblank_count() - v->vb), v->kind, v->tag, (unsigned)v->ofs,
                           (unsigned)v->size, v->nz < 0 ? '?' : '0' + v->nz);
-            if ((k & 3) == 3 || k + 1 == cnt)
+            if (v->repeat > 1)
+                n += snprintf(line + n, sizeof line - (size_t)n, "x%u", (unsigned)v->repeat);
+            if (k % 3 == 2 || k + 1 == cnt)
                 regs_line(x, y, "%s", line);
         }
     }
