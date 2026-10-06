@@ -393,6 +393,16 @@ static inline void tile_sprite(KhGsPacket *p, const Rect *r, int dx, int dy, int
 
 typedef struct BgInfo { int enabled, prio, bpp8; u16 cnt; u32 char_ofs, scr_ofs; int maxtile; } BgInfo;
 
+/* Per-layer draw report for the register readout (nitro_render.c), gathered only while it is
+ * shown: how each BG of each engine was drawn in the last frame.  kind: 0 not drawn, 1 text,
+ * 2 bitmap, 3 affine, 4 extended affine, 5 3D; skip: 0 drawn, 1 screen unmapped, 2 packet full,
+ * 3 no tile on screen; tiles = screen entries drawn, solid = those whose character has any
+ * non-zero pixel; order = position in the draw sequence (1 = first). */
+typedef struct KhBgStat { u8 kind, skip, order, pad; u16 tiles, solid; } KhBgStat;
+KhBgStat kh_ds2d_bgstat[2][4];
+int kh_ds2d_stats_on;
+static int g_draw_order;
+
 /* One pass over the visible 33x25 screen entries: tiles are bucketed by palette (4bpp tiles pick
  * their palette with TEX0.CSA, so each palette in use costs one TEX0 and one GIF tag), screen
  * coordinates come from per-column / per-row tables. */
@@ -412,8 +422,10 @@ static void draw_text_bg(KhGsPacket *p, const Rect *r, int eng, int bg, const Bg
     int slot = (bg < 2 && (b->cnt & 0x2000)) ? bg + 2 : bg;   /* BG0/BG1 may use slot 2/3 */
     int bypal = !b->bpp8 || extpal;                            /* tiles pick a palette */
     int tx, ty, i, n = 0, npal = bypal ? 16 : 1, pal;
-    if (!scr)
+    if (!scr) {
+        kh_ds2d_bgstat[eng][bg].skip = 1;
         return;
+    }
     for (tx = 0; tx <= COLS; tx++)
         xs[tx] = gx(r, (float)(tx * 8 - (hofs & 7)));
     for (ty = 0; ty <= ROWS; ty++)
@@ -441,8 +453,23 @@ static void draw_text_bg(KhGsPacket *p, const Rect *r, int eng, int bg, const Bg
             n++;
         }
     }
-    if (!n)
+    if (kh_ds2d_stats_on) {
+        int solid = 0, tsz = b->bpp8 ? 64 : 32, k;
+        for (i = 0; i < n; i++) {
+            const u8 *c = kh_nitro_view_ptr(view, b->char_ofs + (u32)(ent[i] & 0x3ff) * (u32)tsz);
+            if (!c)
+                continue;
+            for (k = 0; k < tsz && !c[k]; k++)
+                ;
+            solid += k < tsz;
+        }
+        kh_ds2d_bgstat[eng][bg].tiles = (u16)n;
+        kh_ds2d_bgstat[eng][bg].solid = (u16)solid;
+    }
+    if (!n) {
+        kh_ds2d_bgstat[eng][bg].skip = 3;
         return;
+    }
     {
         static u16 sent[COLS * ROWS], spos[COLS * ROWS];
         int at[16];
@@ -455,8 +482,10 @@ static void draw_text_bg(KhGsPacket *p, const Rect *r, int eng, int bg, const Bg
             sent[k] = ent[i];
             spos[k] = pos[i];
         }
-        if (p->len + 8 + (u32)npal * 16 + (u32)n * 2 > p->cap)
+        if (p->len + 8 + (u32)npal * 16 + (u32)n * 2 > p->cap) {
+            kh_ds2d_bgstat[eng][bg].skip = 2;
             return;
+        }
         set_texture(p, tex_addr(eng, bg), b->bpp8, clut_cbp(eng, 0, b->bpp8, 0));
         for (pal = 0; pal < npal; pal++) {
             int c = count[pal];
@@ -1248,6 +1277,10 @@ static void draw_engine(KhGsPacket *p, const Rect *r, int eng)
                 if (nwin > 1)
                     set_clip(p, r, &win[w].c);
                 layer_effect(p, eng, i, win[w].mask & 0x20);
+                if (!kh_ds2d_bgstat[eng][i].order) {
+                    kh_ds2d_bgstat[eng][i].kind = (u8)bg[i].enabled;
+                    kh_ds2d_bgstat[eng][i].order = (u8)++g_draw_order;
+                }
                 if (bg[i].enabled == 5) {
                     draw_3d_layer(p, r);
                     break;                  /* (windows are not applied to the 3D layer) */
@@ -1353,6 +1386,8 @@ void kh_ds2d_draw(int eng, int x, int y, int w, int h)
         trace_engine_b_state();
 #endif
     kh_prof_begin(KH_PROF_R2D);
+    memset(kh_ds2d_bgstat[eng], 0, sizeof kh_ds2d_bgstat[eng]);
+    g_draw_order = 0;
     r.x = (float)x;
     r.y = (float)y;
     r.w = w;

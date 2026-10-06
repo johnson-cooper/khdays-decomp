@@ -55,7 +55,12 @@ static void draw_regs_overlay(int top_eng, int H)
     extern uint32_t kh_nitro_view_banks(int view);
 #define R16(o) (*(volatile u16 *)(kh_ds_io + (o)))
 #define R32(o) (*(volatile u32 *)(kh_ds_io + (o)))
-    int y = g_layout == 2 ? 4 : H - 6 * 10 - 4, x = 4;
+    typedef struct { u8 kind, skip, order, pad; u16 tiles, solid; } BgStat;   /* ds2d.c KhBgStat */
+    extern BgStat kh_ds2d_bgstat[2][4];
+    static const char k_kind[] = "-TBAE3", k_skip[] = " UPN";
+    char line[96];
+    int y = g_layout == 2 ? 4 : H / 2 + 4, x = 4, e, i, n;
+
     regs_line(x, y, "2D  top=%c  POW %04x  CAP %08x  3DCNT %04x  CLEAR %08x",
               top_eng ? 'B' : 'A', R16(0x304), R32(0x64), R16(0x60), R32(0x350));
     y += 10;
@@ -74,6 +79,17 @@ static void draw_regs_overlay(int top_eng, int H)
     regs_line(x, y, "B DISP %08x  BG %04x %04x %04x %04x  BLD %04x ALPHA %04x Y %02x",
               R32(0x1000), R16(0x1008), R16(0x100a), R16(0x100c), R16(0x100e), R16(0x1050),
               R16(0x1052), R16(0x1054) & 0x1f);
+    for (e = 0; e < 2; e++) {
+        y += 10;
+        n = snprintf(line, sizeof line, "%c draw", e ? 'B' : 'A');
+        for (i = 0; i < 4 && n < (int)sizeof line; i++) {
+            const BgStat *b = &kh_ds2d_bgstat[e][i];
+            n += snprintf(line + n, sizeof line - (size_t)n, "  %d:%c#%u %u/%u%c", i,
+                          k_kind[b->kind < 6 ? b->kind : 0], b->order, b->tiles, b->solid,
+                          k_skip[b->skip < 4 ? b->skip : 0]);
+        }
+        regs_line(x, y, "%s", line);
+    }
 #undef R16
 #undef R32
 }
@@ -135,6 +151,10 @@ void kh_nitro_render_frame(void)
     }
     if (g_regs_overlay)
         draw_regs_overlay(top_eng, H);
+    {
+        extern int kh_ds2d_stats_on;
+        kh_ds2d_stats_on = g_regs_overlay;    /* gathered by the next frame's compositor pass */
+    }
 #if KH_PS2_DEBUG
     if (kh_vblank_count() - g_layout_shown < 180) {
         /* integer formatting: %f would pull in soft-float double printf every frame */
