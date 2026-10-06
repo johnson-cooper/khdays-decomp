@@ -30,21 +30,34 @@ static void copy_fwd8(const void *src, void *dst, u32 size)
  * (MIi_CpuClearFast(0, 0x06800000, 0xa4000)) while textures stay in banks mapped as texture
  * memory, and those keep their contents.  Bulk fills and copies into kh_ds_vram therefore go bank
  * by bank and skip banks the CPU could not write.  (Writing them all wiped the cutscene textures:
- * the models then drew black.) */
+ * the models then drew black.)
+ *
+ * Which banks the CPU can see also depends on the window the address came from, and a kh_ds_vram
+ * pointer no longer says which: the LCDC window reaches only banks mapped to the LCDC, a BG/OBJ
+ * window only the banks of that view.  A write longer than any BG/OBJ window (512 KiB) can only
+ * have come through the LCDC window, so it lands in LCDC banks only.  Gfx_ResetDisplayAndVram
+ * (the event scenes' dual-screen 3D setup) and Ov023_Teardown clear the whole LCDC window with
+ * just the texture banks / bank D mapped there; letting that clear reach the BG banks too wiped
+ * the dialog box's tile map (BG3, bank E), which the dialog only re-sends when it changes - the
+ * box then stayed blank for the whole conversation. */
 extern int kh_nitro_vram_bank_at(uint32_t ofs, uint32_t *end);
 extern int kh_nitro_bank_cpu_visible(int b);
+extern int kh_nitro_bank_in_lcdc(int b);
+
+#define VRAM_WINDOW_MAX 0x80000u      /* the largest BG/OBJ window (engine A BG, 512 KiB) */
 
 static inline int in_vram(const void *p)
 {
     return (const u8 *)p >= kh_ds_vram && (const u8 *)p < kh_ds_vram + 0xa4000;
 }
 
-/* Length of the piece of [d, d + size) inside one bank, and whether the CPU may write it. */
-static u32 vram_piece(const u8 *d, u32 size, int *writable)
+/* Length of the piece of [d, d + size) inside one bank, and whether the CPU may write it (lcdc:
+ * the write came through the LCDC window, so only LCDC banks take it). */
+static u32 vram_piece(const u8 *d, u32 size, int lcdc, int *writable)
 {
     uint32_t ofs = (uint32_t)(d - kh_ds_vram), end;
     int b = kh_nitro_vram_bank_at(ofs, &end);
-    *writable = kh_nitro_bank_cpu_visible(b);
+    *writable = lcdc ? kh_nitro_bank_in_lcdc(b) : kh_nitro_bank_cpu_visible(b);
     return end - ofs < size ? end - ofs : size;
 }
 
@@ -52,9 +65,10 @@ static u32 vram_piece(const u8 *d, u32 size, int *writable)
     do {                                                                             \
         u8 *d_ = (u8 *)(dst);                                                        \
         u32 left_ = (size);                                                          \
+        int lcdc_ = left_ > VRAM_WINDOW_MAX;                                         \
         while (left_) {                                                              \
             int ok_;                                                                 \
-            u32 n_ = vram_piece(d_, left_, &ok_);                                    \
+            u32 n_ = vram_piece(d_, left_, lcdc_, &ok_);                             \
             if (ok_) {                                                               \
                 FILL(d_, n_);                                                        \
                 kh_vram_mark((u32)(d_ - kh_ds_vram), n_);                            \
@@ -72,9 +86,10 @@ static u32 vram_piece(const u8 *d, u32 size, int *writable)
         const u8 *s_ = (const u8 *)(src);                                            \
         u8 *d_ = (u8 *)(dst);                                                        \
         u32 left_ = (size);                                                          \
+        int lcdc_ = left_ > VRAM_WINDOW_MAX;                                         \
         while (left_) {                                                              \
             int ok_;                                                                 \
-            u32 n_ = vram_piece(d_, left_, &ok_);                                    \
+            u32 n_ = vram_piece(d_, left_, lcdc_, &ok_);                             \
             if (ok_) {                                                               \
                 COPY(s_, d_, n_);                                                    \
                 kh_vram_mark((u32)(d_ - kh_ds_vram), n_);                            \

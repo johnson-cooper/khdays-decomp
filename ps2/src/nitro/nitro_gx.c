@@ -76,6 +76,12 @@ int kh_nitro_bank_cpu_visible(int b)
     return b >= 0 && ((m >> b) & 1);
 }
 
+/* Whether bank b is mapped to the LCDC window (0x06800000..) */
+int kh_nitro_bank_in_lcdc(int b)
+{
+    return b >= 0 && ((g_view_banks[VIEW_LCDC] >> b) & 1);
+}
+
 /* window 0..3 = BG-A, BG-B, OBJ-A, OBJ-B (the 0x06000000.. CPU windows) */
 uint32_t kh_nitro_vram_window_ofs(int window)
 {
